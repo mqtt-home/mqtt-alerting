@@ -1,0 +1,10 @@
+FROM gcr.io/distroless/static:nonroot
+
+WORKDIR /
+
+COPY mqtt-mail /mqtt-mail
+COPY web/dist /web/dist
+
+USER nonroot:nonroot
+
+ENTRYPOINT ["/mqtt-mail", "/var/lib/mqtt-mail/config.json"]

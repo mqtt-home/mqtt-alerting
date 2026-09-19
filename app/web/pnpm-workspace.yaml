@@ -1,0 +1,5 @@
+# pnpm 11 blocks dependency build scripts by default; allow esbuild's so the
+# vite build works. (Replaces the pre-v11 `onlyBuiltDependencies` list, which
+# pnpm 11 silently ignores.)
+allowBuilds:
+  esbuild: true

@@ -1,0 +1,19 @@
+{
+  "mqtt": {
+    "url": "tcp://10.10.1.3:1883",
+    "topic": "home/mail",
+    "qos": 2,
+    "retain": true
+  },
+  "mail": {
+    "host": "10.10.x.x",
+    "username": "your-user",
+    "password": "your-password",
+    "polling_interval": 30
+  },
+  "web": {
+    "enabled": true,
+    "port": 8080
+  },
+  "loglevel": "info"
+}

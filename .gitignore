@@ -1,0 +1,11 @@
+.idea/
+.DS_Store
+config.json
+app/build/
+app/web/dist/
+app/web/node_modules/
+app/web/tsconfig.tsbuildinfo
+app/web/tsconfig.node.tsbuildinfo
+# emitted by `tsc -b` via the tsconfig.node.json project reference
+app/web/vite.config.d.ts
+app/web/vite.config.js
