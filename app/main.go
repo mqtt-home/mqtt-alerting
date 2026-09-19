@@ -19,11 +19,12 @@ import (
 )
 
 var (
-	client    *mail.Client
+	engine    *mail.Engine
+	mailer    *mail.Mailer
 	webServer *web.WebServer
 )
 
-// publishStatus mirrors the device state onto `<topic>/status`. Retained, so a
+// publishStatus mirrors the alert state onto `<topic>/status`. Retained, so a
 // consumer that subscribes later immediately sees the current state.
 func publishStatus(status mail.Status) {
 	cfg := config.Get()
@@ -88,7 +89,8 @@ func dispatchCommand(action string) {
 
 	var err error
 	switch action {
-	// TODO: real commands
+	case "test":
+		err = mailer.SendTest(time.Now())
 	default:
 		logger.Warn("Unknown action", "action", action)
 		return
@@ -96,6 +98,16 @@ func dispatchCommand(action string) {
 
 	if err != nil {
 		logger.Error("Command failed", "action", action, "error", err)
+	}
+}
+
+// subscribeToRules feeds every topic a rule watches into the engine.
+func subscribeToRules() {
+	for _, filter := range engine.Subscriptions() {
+		logger.Info("Watching", "topic", filter)
+		mqtt.Subscribe(filter, func(topic string, payload []byte) {
+			engine.HandleMessage(topic, payload, time.Now())
+		})
 	}
 }
 
@@ -127,32 +139,34 @@ func main() {
 	// never absent and consumers start from a safe default.
 	publishAvailability(false)
 
-	client = mail.NewClient(
-		cfg.Mail.Host,
-		cfg.Mail.Username,
-		cfg.Mail.Password,
-	)
-	client.AddStatusChangeListener(publishStatus)
-
-	logger.Info("Connecting to Mail Alerts...")
-	if err := client.Connect(); err != nil {
-		// Not fatal: the poller retries, and the liveness probe restarts the pod
-		// if it stays unreachable past the grace window.
-		logger.Error("Failed to connect", "error", err)
-	} else {
-		publishAvailability(true)
+	engine, err = mail.NewEngine(cfg.Mail.Rules, time.Now())
+	if err != nil {
+		// A rule that does not compile would silently watch nothing; refuse to
+		// start so the rollout fails where someone sees it.
+		logger.Error("Invalid rules", "error", err)
+		os.Exit(1)
 	}
+	logger.Info("Rules loaded", "count", len(cfg.Mail.Rules))
 
-	publishStatus(client.GetStatus())
+	mailer = mail.NewMailer(cfg.Mail)
+	mailer.OnChange(engine.NotifyStatus)
+	engine.OnEvent(mailer.Enqueue)
+	engine.SetMailStats(mailer.Stats)
+	engine.AddStatusChangeListener(publishStatus)
+
+	publishAvailability(true)
+	publishStatus(engine.GetStatus())
 	subscribeToCommands()
+	subscribeToRules()
 
-	stopPolling := make(chan struct{})
-	go client.StartPolling(time.Duration(cfg.Mail.PollingInterval)*time.Second, stopPolling)
+	stop := make(chan struct{})
+	go engine.Run(5*time.Second, stop)
+	go mailer.Run(5*time.Second, stop)
 
 	if !cfg.Web.Enabled {
 		logger.Info("Web interface is disabled in the configuration")
 	} else {
-		webServer = web.NewWebServer(client)
+		webServer = web.NewWebServer(engine, mailer)
 		go func() {
 			logger.Info("Web interface available", "url", "http://localhost:"+strconv.Itoa(cfg.Web.Port))
 			if err := webServer.Start(cfg.Web.Port); err != nil {
@@ -167,7 +181,8 @@ func main() {
 	signal.Notify(quitChannel, syscall.SIGINT, syscall.SIGTERM)
 	<-quitChannel
 
-	close(stopPolling)
+	close(stop)
+	publishAvailability(false)
 	logger.Info("Shutdown complete")
 }
 

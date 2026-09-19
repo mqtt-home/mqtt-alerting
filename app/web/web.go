@@ -10,11 +10,11 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mqtt-home/mqtt-mail/config"
-	"github.com/mqtt-home/mqtt-mail/mail"
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
+	"github.com/mqtt-home/mqtt-mail/config"
+	"github.com/mqtt-home/mqtt-mail/mail"
 	"github.com/philipparndt/go-logger"
 	loggerchi "github.com/philipparndt/go-logger/chi"
 )
@@ -25,7 +25,8 @@ type SSEClient struct {
 }
 
 type WebServer struct {
-	client *mail.Client
+	client *mail.Engine
+	mailer *mail.Mailer
 	router *chi.Mux
 
 	sseClients   map[string]*SSEClient
@@ -38,9 +39,10 @@ type WebServer struct {
 	unhealthyMu    sync.Mutex
 }
 
-func NewWebServer(client *mail.Client) *WebServer {
+func NewWebServer(client *mail.Engine, mailer *mail.Mailer) *WebServer {
 	ws := &WebServer{
 		client:     client,
+		mailer:     mailer,
 		router:     chi.NewRouter(),
 		sseClients: make(map[string]*SSEClient),
 	}
@@ -65,7 +67,7 @@ func (ws *WebServer) setupRoutes() {
 		r.Get("/livez", ws.liveness)
 		r.Get("/status", ws.getStatus)
 		r.Get("/events", ws.handleSSE)
-		// TODO: command endpoints
+		r.Post("/test", ws.sendTestMail)
 	})
 
 	// SPA fallback: serve static files, fall back to index.html for client routes.
@@ -84,6 +86,18 @@ func (ws *WebServer) setupRoutes() {
 func (ws *WebServer) getStatus(w http.ResponseWriter, _ *http.Request) {
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(ws.client.GetStatus())
+}
+
+// sendTestMail sends a mail right now and reports the SMTP error verbatim —
+// the only way to find out whether the account works before it matters.
+func (ws *WebServer) sendTestMail(w http.ResponseWriter, _ *http.Request) {
+	w.Header().Set("Content-Type", "application/json")
+	if err := ws.mailer.SendTest(time.Now()); err != nil {
+		w.WriteHeader(http.StatusBadGateway)
+		json.NewEncoder(w).Encode(map[string]any{"success": false, "message": err.Error()})
+		return
+	}
+	json.NewEncoder(w).Encode(map[string]any{"success": true})
 }
 
 // healthCheck is the always-200 diagnostic endpoint. Use /livez for the probe.

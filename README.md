@@ -1,22 +1,68 @@
 # mqtt-mail
 
-A bridge between Mail Alerts and a local MQTT broker, with a built-in web UI.
+Watches MQTT topics with rules from its config and sends an email when one of
+them says something is wrong. It exists because a bridge can look perfectly
+healthy — running, publishing, answering pings — while the one thing it is for
+has been broken for weeks.
 
-## Features
+## Rules
 
-- Publishes device state to `home/mail/status` (retained)
-- Publishes connection state to `home/mail/availability` (`online` / `offline`, retained)
-- Accepts JSON commands on `home/mail/set`
-- Web UI with live updates over Server-Sent Events
-- `/api/livez` liveness endpoint so Kubernetes restarts a stuck bridge
+A rule is evaluated separately for every concrete topic its filters match, so a
+single wildcard rule covers every service that follows the same convention.
+
+| Type | Fires when | Needs |
+|---|---|---|
+| `state` | the condition holds continuously for `for` | `condition`, `for` (optional) |
+| `count` | the condition matched `count` times within `within`; resolves after a quiet window | `condition`, `count`, `within` |
+| `silence` | no message arrived for `for` | `for` |
+
+```json
+{
+  "name": "bridge-offline",
+  "description": "a bridge reports offline",
+  "type": "state",
+  "topics": ["+/bridge/state", "+/+/bridge/state"],
+  "exclude": ["test/#"],
+  "condition": { "equals": "offline" },
+  "for": "10m",
+  "repeat": "24h",
+  "recovery": true
+}
+```
+
+- `topics` / `exclude` — MQTT filters, `+` and `#` allowed.
+- `condition` — tests the raw payload, or with `field` a dot path into a JSON
+  payload (`"field": "battery"`). Operators: `equals`, `not_equals`, `regex`,
+  `lt`, `gt`; all that are set must hold.
+- `for`, `within`, `repeat` — Go durations (`"90s"`, `"10m"`, `"24h"`).
+- `repeat` — re-send a still-firing alert at this interval. Omit for one mail.
+- `recovery` — send a mail when the alert resolves. Defaults to `true`.
+
+A `silence` rule on a concrete topic starts its clock at startup, so a topic
+that never says anything is caught too. With a wildcard filter a topic is
+tracked from its first message on.
+
+Rules that do not compile stop the service at startup rather than silently
+watching nothing.
+
+## Mail
+
+Alerts are collected for `batch_seconds` (default 30) and sent as one mail.
+Beyond `max_mails_per_hour` (default 12) mails are held back and keep batching —
+never dropped. A failed delivery is retried with the next flush and shown in the
+status. With `smtp.enabled: false` everything runs but mails are only logged,
+which is the way to try out new rules.
 
 ## MQTT topics
 
 | Topic | Direction | Payload |
 |---|---|---|
-| `home/mail/status` | published, retained | JSON device state |
+| `home/mail/status` | published, retained | rules, current alerts, history, mail statistics |
 | `home/mail/availability` | published, retained | `online` \| `offline` |
-| `home/mail/set` | subscribed | `{"action": "..."}` |
+| `home/mail/set` | subscribed | `{"action": "test"}` sends a test mail |
+
+The web UI shows the same status live and has a "Send test mail" button that
+reports the SMTP error verbatim.
 
 ## Quick start
 

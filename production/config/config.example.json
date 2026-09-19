@@ -6,10 +6,52 @@
     "retain": true
   },
   "mail": {
-    "host": "10.10.x.x",
-    "username": "your-user",
-    "password": "your-password",
-    "polling_interval": 30
+    "smtp": {
+      "enabled": true,
+      "host": "smtp.example.com",
+      "port": 587,
+      "username": "${SMTP_USER}",
+      "password": "${SMTP_PASS}",
+      "from": "${SMTP_USER}",
+      "to": "${MAIL_TO}"
+    },
+    "subject_prefix": "[smarthome]",
+    "batch_seconds": 30,
+    "max_mails_per_hour": 12,
+    "rules": [
+      {
+        "name": "bridge-offline",
+        "description": "a bridge reports offline",
+        "type": "state",
+        "topics": ["+/bridge/state", "+/+/bridge/state"],
+        "exclude": ["test/#"],
+        "condition": { "equals": "offline" },
+        "for": "10m",
+        "repeat": "24h"
+      },
+      {
+        "name": "zigbee2mqtt-offline",
+        "type": "state",
+        "topics": ["zigbee2mqtt/bridge/state"],
+        "condition": { "field": "state", "equals": "offline" },
+        "for": "10m"
+      },
+      {
+        "name": "reconnect-loop",
+        "description": "device looks alive but keeps reconnecting",
+        "type": "count",
+        "topics": ["+/+/bridge/logs"],
+        "condition": { "regex": "Reconnect attempt|WATCHDOG" },
+        "count": 8,
+        "within": "15m"
+      },
+      {
+        "name": "power-meter-silent",
+        "type": "silence",
+        "topics": ["haus/strom"],
+        "for": "15m"
+      }
+    ]
   },
   "web": {
     "enabled": true,

@@ -16,5 +16,9 @@ export async function sendCommand(action: string, body: Record<string, unknown> 
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(body),
   });
-  if (!response.ok) throw new Error(`Failed to ${action}`);
+  if (!response.ok) {
+    // The backend passes the SMTP error through; show it rather than a generic one.
+    const detail = await response.json().catch(() => null);
+    throw new Error(detail?.message ?? `Failed to ${action}`);
+  }
 }
