@@ -7,7 +7,7 @@ require (
 	github.com/go-chi/cors v1.2.2
 	github.com/philipparndt/go-logger v1.10.0
 	github.com/philipparndt/go-logger/chi v0.0.0-20260418052559-78574db4574d
-	github.com/philipparndt/mqtt-gateway v1.10.0
+	github.com/philipparndt/mqtt-gateway v1.11.0
 )
 
 require (

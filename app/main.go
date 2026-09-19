@@ -183,6 +183,8 @@ func main() {
 
 	close(stop)
 	publishAvailability(false)
+	// Clean DISCONNECT: a planned shutdown must not fire the "offline" will.
+	mqtt.Stop()
 	logger.Info("Shutdown complete")
 }
 
