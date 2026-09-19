@@ -121,6 +121,13 @@ func main() {
 		os.Exit(1)
 	}
 
+	// `mqtt-mail --check config.json` validates the rules and exits, without
+	// touching MQTT or SMTP. A rule that does not compile stops the service at
+	// startup, so check before rolling out.
+	if os.Args[1] == "--check" {
+		os.Exit(checkConfig(os.Args[2:]))
+	}
+
 	configFile := os.Args[1]
 	logger.Info("Configuration file", "path", configFile)
 
@@ -152,6 +159,7 @@ func main() {
 	mailer.OnChange(engine.NotifyStatus)
 	engine.OnEvent(mailer.Enqueue)
 	engine.SetMailStats(mailer.Stats)
+	mailer.SetSnapshot(engine.GetStatus)
 	engine.AddStatusChangeListener(publishStatus)
 
 	publishAvailability(true)
@@ -186,6 +194,27 @@ func main() {
 	// Clean DISCONNECT: a planned shutdown must not fire the "offline" will.
 	mqtt.Stop()
 	logger.Info("Shutdown complete")
+}
+
+func checkConfig(args []string) int {
+	if len(args) != 1 {
+		logger.Error("Usage: mqtt-mail --check <config.json>")
+		return 2
+	}
+	cfg, err := config.LoadConfig(args[0])
+	if err != nil {
+		return 1
+	}
+	e, err := mail.NewEngine(cfg.Mail.Rules, time.Now())
+	if err != nil {
+		logger.Error("Invalid rules", "error", err)
+		return 1
+	}
+	for _, r := range e.GetStatus().Rules {
+		logger.Info("Rule ok", "name", r.Name, "type", r.Type, "check", r.Summary)
+	}
+	logger.Info("Configuration is valid", "rules", len(cfg.Mail.Rules), "subscriptions", len(e.Subscriptions()))
+	return 0
 }
 
 // initPprof exposes pprof + expvar on :6060. Every bridge does this; the chart

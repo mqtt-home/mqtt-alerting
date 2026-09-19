@@ -15,11 +15,14 @@ single wildcard rule covers every service that follows the same convention.
 | `state` | the condition holds continuously for `for` | `condition`, `for` (optional) |
 | `count` | the condition matched `count` times within `within`; resolves after a quiet window | `condition`, `count`, `within` |
 | `silence` | no message arrived for `for` | `for` |
+| `silence` + `"group": true` | nothing at all arrived under a filter (`wolf-cwl/#`) — one alert per filter instead of one per topic | `for` |
 
 ```json
 {
   "name": "bridge-offline",
   "description": "a bridge reports offline",
+  "title": "{device} bridge is offline",
+  "resolved_title": "{device} bridge is back online",
   "type": "state",
   "topics": ["+/bridge/state", "+/+/bridge/state"],
   "exclude": ["test/#"],
@@ -31,6 +34,10 @@ single wildcard rule covers every service that follows the same convention.
 ```
 
 - `topics` / `exclude` — MQTT filters, `+` and `#` allowed.
+- `title` / `resolved_title` — the headline of the alert and of its recovery.
+  Placeholders: `{device}` (what the filter's wildcards matched: `+/+/bridge/state`
+  on `haus/shelly/bridge/state` gives `haus/shelly`; for a group the filter
+  without `/#`), `{topic}`, `{value}`, `{rule}`.
 - `condition` — tests the raw payload, or with `field` a dot path into a JSON
   payload (`"field": "battery"`). Operators: `equals`, `not_equals`, `regex`,
   `lt`, `gt`; all that are set must hold.
@@ -43,9 +50,29 @@ that never says anything is caught too. With a wildcard filter a topic is
 tracked from its first message on.
 
 Rules that do not compile stop the service at startup rather than silently
-watching nothing.
+watching nothing. Check a config before rolling it out:
+
+```bash
+mqtt-mail --check config.json
+```
 
 ## Mail
+
+Mails are HTML with a plain-text alternative (`"plain_text": true` for text
+only). Each one leads with a single sentence that is right even if nothing else
+is read, then lists what went wrong, what is still not fixed and what works
+again, other problems that are still open, and an overview of every rule with
+what it watches and whether it is fine — so a mail about one broken thing also
+says what works. `ui_url` adds a link to the dashboard.
+
+To look at the styling without sending anything:
+
+```bash
+cd app && MAIL_PREVIEW_DIR=/tmp/preview go test ./mail -run TestPreview   # writes *.html
+```
+
+The test mail (button in the UI, or `{"action": "test"}`) carries one made-up
+alert of every kind plus the real overview.
 
 Alerts are collected for `batch_seconds` (default 30) and sent as one mail.
 Beyond `max_mails_per_hour` (default 12) mails are held back and keep batching —

@@ -256,14 +256,14 @@ func mailCfg() config.MailConfig {
 }
 
 func event(kind, topic string, at time.Time) Event {
-	return Event{Kind: kind, At: at, Alert: Alert{Rule: "bridge-offline", Topic: topic, Value: "offline", Since: at}}
+	return Event{Kind: kind, At: at, Alert: Alert{Rule: "bridge-offline", Title: topic + " is offline", Topic: topic, Value: "offline", Since: at}}
 }
 
 func TestMailerBatchesAndRespectsBudget(t *testing.T) {
 	var subjects []string
 	m := NewMailer(mailCfg())
-	m.send = func(_ config.SMTPConfig, subject, _ string) error {
-		subjects = append(subjects, subject)
+	m.send = func(_ config.SMTPConfig, mail Mail) error {
+		subjects = append(subjects, mail.Subject)
 		return nil
 	}
 
@@ -280,7 +280,7 @@ func TestMailerBatchesAndRespectsBudget(t *testing.T) {
 
 	m.Enqueue(event(EventResolved, "a/bridge/state", t0.Add(2*time.Minute)))
 	m.Flush(t0.Add(3 * time.Minute))
-	if subjects[1] != "[home] RESOLVED bridge-offline: a/bridge/state" {
+	if subjects[1] != "[home] RESOLVED: a/bridge/state is offline" {
 		t.Fatalf("got %q", subjects[1])
 	}
 
@@ -300,7 +300,7 @@ func TestMailerRetriesAfterFailure(t *testing.T) {
 	fail := true
 	sent := 0
 	m := NewMailer(mailCfg())
-	m.send = func(config.SMTPConfig, string, string) error {
+	m.send = func(config.SMTPConfig, Mail) error {
 		if fail {
 			return errors.New("535 authentication failed")
 		}
@@ -321,14 +321,223 @@ func TestMailerRetriesAfterFailure(t *testing.T) {
 	}
 }
 
-func TestComposeBody(t *testing.T) {
-	ev := event(EventResolved, "haus/shelly/bridge/state", t0)
-	ev.Duration = "12m 3s"
-	ev.Alert.Description = "a bridge reports offline"
-	_, body := compose("", []Event{ev}, t0)
-	for _, want := range []string{"RESOLVED", "haus/shelly/bridge/state", "a bridge reports offline", "firing: 12m 3s"} {
-		if !strings.Contains(body, want) {
-			t.Errorf("body misses %q:\n%s", want, body)
+func TestTitlesUseWhatTheWildcardsMatched(t *testing.T) {
+	e, got := newEngine(t, `[{
+		"name": "bridge-offline", "type": "state", "title": "{device} is offline",
+		"topics": ["+/+/bridge/state"], "condition": {"equals": "offline"}
+	}, {
+		"name": "battery", "type": "state", "title": "{device}: battery at {value} %",
+		"topics": ["zigbee2mqtt/+"], "condition": {"field": "battery", "lt": 15}
+	}, {
+		"name": "shelly", "type": "state", "title": "Shelly {device} is unreachable",
+		"topics": ["shelly/+/+/+/online"], "condition": {"equals": "false"}
+	}]`)
+
+	e.HandleMessage("haus/shelly/bridge/state", []byte("offline"), t0)
+	e.HandleMessage("zigbee2mqtt/eg_cont_haustuere", []byte(`{"battery":7}`), t0)
+	e.HandleMessage("shelly/og/leni/east/online", []byte("false"), t0)
+
+	want := []string{"haus/shelly is offline", "eg_cont_haustuere: battery at 7 %", "Shelly og/leni/east is unreachable"}
+	for i, w := range want {
+		if (*got)[i].Alert.Title != w {
+			t.Errorf("title %d = %q, want %q", i, (*got)[i].Alert.Title, w)
 		}
+	}
+}
+
+// 51 topics under wolf-cwl/# each have their own rhythm. What matters is
+// whether the service says anything at all.
+func TestGroupSilenceWatchesTheFilterAsAWhole(t *testing.T) {
+	e, got := newEngine(t, `[{
+		"name": "data-silent", "type": "silence", "group": true, "title": "{device} stopped publishing",
+		"topics": ["wolf-cwl/#", "garden/weather/#"], "for": "30m"
+	}]`)
+
+	e.HandleMessage("wolf-cwl/temperature/supply", []byte("21"), t0.Add(time.Minute))
+	for i := 1; i < 7; i++ {
+		e.HandleMessage("wolf-cwl/airflow/current_volume", []byte("140"), t0.Add(time.Duration(i*10)*time.Minute))
+	}
+	e.Tick(t0.Add(61 * time.Minute))
+
+	// wolf-cwl kept talking (one quiet topic does not matter), the weather
+	// station never said a word.
+	if kinds(*got) != "firing:garden/weather/#" {
+		t.Fatalf("got %q", kinds(*got))
+	}
+	if (*got)[0].Alert.Title != "garden/weather stopped publishing" {
+		t.Fatalf("title = %q", (*got)[0].Alert.Title)
+	}
+	if n := e.GetStatus().Rules[0].Watching; n != 2 {
+		t.Fatalf("watching %d instances, want one per filter", n)
+	}
+
+	e.HandleMessage("garden/weather/wind", []byte("3"), t0.Add(70*time.Minute))
+	if (*got)[1].Kind != EventResolved {
+		t.Fatalf("got %q", kinds(*got))
+	}
+}
+
+func TestGroupOnlyForSilence(t *testing.T) {
+	_, err := NewEngine(rules(t, `[{"name":"a","type":"state","group":true,"topics":["a/#"],"condition":{"equals":"x"}}]`), t0)
+	if err == nil {
+		t.Fatal("accepted group on a state rule")
+	}
+}
+
+// Overlapping subscriptions make the broker deliver one message twice.
+func TestCountIgnoresDuplicateDeliveries(t *testing.T) {
+	e, got := newEngine(t, `[{
+		"name": "loop", "type": "count", "topics": ["a/logs"],
+		"condition": {"regex": "Reconnect"}, "count": 3, "within": "10m"
+	}]`)
+
+	e.HandleMessage("a/logs", []byte("Reconnect attempt 1"), t0)
+	e.HandleMessage("a/logs", []byte("Reconnect attempt 1"), t0.Add(5*time.Millisecond))
+	e.HandleMessage("a/logs", []byte("Reconnect attempt 2"), t0.Add(time.Second))
+	e.HandleMessage("a/logs", []byte("Reconnect attempt 2"), t0.Add(time.Second+5*time.Millisecond))
+	if len(*got) != 0 {
+		t.Fatalf("two real messages counted as four: %s", kinds(*got))
+	}
+
+	// The same line again a minute later is a new occurrence, not a duplicate.
+	e.HandleMessage("a/logs", []byte("Reconnect attempt 2"), t0.Add(time.Minute))
+	if kinds(*got) != "firing:a/logs" {
+		t.Fatalf("got %q", kinds(*got))
+	}
+}
+
+func sampleStatus() *Status {
+	return &Status{
+		Rules: []RuleInfo{
+			{Name: "bridge-offline", Description: "a bridge reports offline", Watching: 19, Firing: 2},
+			{Name: "battery-low", Summary: "battery < 15 for 1h", Watching: 24},
+			{Name: "data-silent", Description: "a service stopped publishing", Watching: 12, Pending: 1},
+		},
+		Alerts: []Alert{
+			{Rule: "bridge-offline", Title: "haus/shelly is offline", Topic: "haus/shelly/bridge/state", State: StateFiring, Since: t0},
+			{Rule: "bridge-offline", Title: "sonos is offline", Topic: "sonos/bridge/state", State: StateFiring, Since: t0},
+		},
+	}
+}
+
+func TestComposeSaysWhatIsWrongAndWhatWorks(t *testing.T) {
+	fired := event(EventFiring, "haus/shelly/bridge/state", t0)
+	fired.Alert.Description = "a bridge reports offline"
+	resolved := event(EventResolved, "rules/bridge/state", t0)
+	resolved.Duration = "12m 3s"
+
+	mail := compose([]Event{fired, resolved}, renderOptions{Prefix: "[home]", UIURL: "https://mail.example", Now: t0, Status: sampleStatus()})
+
+	if mail.Subject != "[home] 2 alerts (1 alert, 1 resolved)" {
+		t.Errorf("subject = %q", mail.Subject)
+	}
+	for _, body := range []string{mail.Text, mail.HTML} {
+		for _, want := range []string{
+			"1 problem needs attention",           // headline
+			"haus/shelly/bridge/state is offline", // what went wrong
+			"12m 3s",                              // how long the other one was down
+			"sonos is offline",                    // open problem this mail is not about
+			"battery-low",                         // overview: a rule that is fine
+			"https://mail.example",
+		} {
+			if !strings.Contains(body, want) {
+				t.Errorf("body misses %q", want)
+			}
+		}
+	}
+	// The alert this mail is about must not show up again under "other open problems".
+	if strings.Count(mail.Text, "haus/shelly is offline") != 0 {
+		t.Error("alert repeated under other open problems")
+	}
+	if !strings.Contains(mail.HTML, ">OK<") || !strings.Contains(mail.HTML, "2 firing") {
+		t.Error("overview pills missing")
+	}
+}
+
+func TestHeadlineWhenEverythingRecovered(t *testing.T) {
+	resolved := event(EventResolved, "rules/bridge/state", t0)
+	clear := &Status{Rules: []RuleInfo{{Name: "bridge-offline", Watching: 19}}}
+
+	if head, kind := headline([]Event{resolved}, renderOptions{Status: clear}); head != "1 thing works again — all clear" || kind != EventResolved {
+		t.Errorf("got %q / %s", head, kind)
+	}
+	// Good news must not hide that something else is still broken.
+	if head, kind := headline([]Event{resolved}, renderOptions{Status: sampleStatus()}); head != "1 thing works again, 2 problems still open" || kind != EventReminder {
+		t.Errorf("got %q / %s", head, kind)
+	}
+}
+
+func TestHTMLEscapesPayloads(t *testing.T) {
+	ev := event(EventFiring, "a/logs", t0)
+	ev.Alert.Value = `<script>alert("x")</script>`
+	mail := compose([]Event{ev}, renderOptions{Now: t0})
+	if strings.Contains(mail.HTML, "<script>") {
+		t.Fatal("payload reached the HTML unescaped")
+	}
+}
+
+func TestMimeBody(t *testing.T) {
+	headers, body := mimeBody(Mail{Text: "plain ünïcode", HTML: "<b>html</b>"}, "BOUNDARY")
+	if len(headers) != 1 || !strings.Contains(headers[0], `multipart/alternative; boundary="BOUNDARY"`) {
+		t.Fatalf("headers = %q", headers)
+	}
+	if strings.Count(body, "--BOUNDARY\r\n") != 2 || !strings.HasSuffix(body, "--BOUNDARY--\r\n") {
+		t.Fatalf("bad multipart structure:\n%s", body)
+	}
+	if strings.Index(body, "text/plain") > strings.Index(body, "text/html") {
+		t.Fatal("html must be the last alternative")
+	}
+	for _, line := range strings.Split(body, "\r\n") {
+		if len(line) > 76 {
+			t.Fatalf("line of %d chars", len(line))
+		}
+	}
+
+	headers, _ = mimeBody(Mail{Text: "only text"}, "B")
+	if len(headers) != 2 || !strings.HasPrefix(headers[0], "Content-Type: text/plain") {
+		t.Fatalf("plain headers = %q", headers)
+	}
+}
+
+func TestTestMailShowsEveryStyle(t *testing.T) {
+	var sent Mail
+	m := NewMailer(mailCfg())
+	m.send = func(_ config.SMTPConfig, mail Mail) error { sent = mail; return nil }
+	m.SetSnapshot(func() Status { return *sampleStatus() })
+
+	if err := m.SendTest(t0); err != nil {
+		t.Fatal(err)
+	}
+	for _, want := range []string{"made up", "What went wrong", "Still not fixed", "Working again", "Overview"} {
+		if !strings.Contains(sent.HTML, want) {
+			t.Errorf("test mail misses %q", want)
+		}
+	}
+	if sent.Subject != "[home] Test mail" {
+		t.Errorf("subject = %q", sent.Subject)
+	}
+}
+
+func TestResolvedTitleAndCurrentValue(t *testing.T) {
+	e, got := newEngine(t, `[{
+		"name": "bridge-offline", "type": "state", "topics": ["+/bridge/state"],
+		"title": "{device} is offline", "resolved_title": "{device} is back online",
+		"condition": {"equals": "offline"}
+	}, {
+		"name": "quiet", "type": "silence", "topics": ["a"], "for": "1m"
+	}]`)
+
+	e.HandleMessage("sonos/bridge/state", []byte("offline"), t0)
+	e.HandleMessage("sonos/bridge/state", []byte("online"), t0.Add(time.Minute))
+	resolved := (*got)[1]
+	if resolved.Alert.Title != "sonos is back online" || resolved.Alert.Value != "online" {
+		t.Fatalf("got %q / %q", resolved.Alert.Title, resolved.Alert.Value)
+	}
+
+	e.Tick(t0.Add(2 * time.Minute))
+	e.HandleMessage("a", []byte("x"), t0.Add(3*time.Minute))
+	last := (*got)[len(*got)-1]
+	if last.Alert.Title != "a: back to normal" || last.Alert.Value != "" {
+		t.Fatalf("got %q / %q", last.Alert.Title, last.Alert.Value)
 	}
 }

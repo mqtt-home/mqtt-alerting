@@ -26,6 +26,10 @@ type MailConfig struct {
 	SMTP SMTPConfig `json:"smtp"`
 	// SubjectPrefix is prepended to every subject, e.g. "[smarthome]".
 	SubjectPrefix string `json:"subject_prefix,omitempty"`
+	// UIURL is linked from the mails ("open dashboard"). Optional.
+	UIURL string `json:"ui_url,omitempty"`
+	// PlainText sends text-only mails instead of HTML with a text fallback.
+	PlainText bool `json:"plain_text,omitempty"`
 	// BatchSeconds is how long alerts are collected before one mail goes out,
 	// so a broker restart produces one mail instead of twenty. Defaults to 30.
 	BatchSeconds int `json:"batch_seconds,omitempty"`
@@ -57,6 +61,15 @@ const (
 type RuleConfig struct {
 	Name        string `json:"name"`
 	Description string `json:"description,omitempty"`
+	// Title is the human readable headline of an alert. Placeholders:
+	// {device} - the part of the topic the filter's wildcards matched
+	//            ("+/+/bridge/state" on "haus/shelly/bridge/state" -> "haus/shelly")
+	// {topic}, {value}, {rule}
+	// Defaults to "{device}".
+	Title string `json:"title,omitempty"`
+	// ResolvedTitle is the headline once the alert is over ("{device} is back
+	// online"). Same placeholders. Defaults to "{device}: back to normal".
+	ResolvedTitle string `json:"resolved_title,omitempty"`
 	// Type is "state" (condition holds for `for`), "count" (condition matched
 	// `count` times within `within`) or "silence" (no message for `for`).
 	Type string `json:"type"`
@@ -65,6 +78,11 @@ type RuleConfig struct {
 	Exclude []string `json:"exclude,omitempty"`
 
 	Condition *ConditionConfig `json:"condition,omitempty"`
+
+	// Group makes a silence rule watch each filter as a whole: it fires when
+	// nothing at all arrived under "wolf-cwl/#", instead of tracking every
+	// topic below it on its own. Only valid for type "silence".
+	Group bool `json:"group,omitempty"`
 
 	For    Duration `json:"for,omitempty"`
 	Count  int      `json:"count,omitempty"`

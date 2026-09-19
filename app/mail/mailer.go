@@ -19,7 +19,7 @@ import (
 var errDisabled = errors.New("mail sending is disabled")
 
 // SendFunc delivers one mail. Swapped out in tests.
-type SendFunc func(cfg config.SMTPConfig, subject, body string) error
+type SendFunc func(cfg config.SMTPConfig, mail Mail) error
 
 // Mailer collects events and turns them into as few mails as possible: events
 // arriving within the batch window share one mail, and beyond the hourly
@@ -39,6 +39,7 @@ type Mailer struct {
 	lastErrorAt *time.Time
 
 	onChange func()
+	snapshot func() Status
 }
 
 func NewMailer(cfg config.MailConfig) *Mailer {
@@ -46,6 +47,22 @@ func NewMailer(cfg config.MailConfig) *Mailer {
 }
 
 func (m *Mailer) OnChange(f func()) { m.onChange = f }
+
+// SetSnapshot provides the live status for the overview at the end of each mail.
+func (m *Mailer) SetSnapshot(f func() Status) { m.snapshot = f }
+
+func (m *Mailer) render(events []Event, now time.Time, demo bool) Mail {
+	opt := renderOptions{Prefix: m.cfg.SubjectPrefix, UIURL: m.cfg.UIURL, Now: now, Demo: demo}
+	if m.snapshot != nil {
+		status := m.snapshot()
+		opt.Status = &status
+	}
+	mail := compose(events, opt)
+	if m.cfg.PlainText {
+		mail.HTML = ""
+	}
+	return mail
+}
 
 // Enqueue adds an event to the next mail.
 func (m *Mailer) Enqueue(ev Event) {
@@ -83,8 +100,7 @@ func (m *Mailer) Flush(now time.Time) {
 	m.queue = nil
 	m.mu.Unlock()
 
-	subject, body := compose(m.cfg.SubjectPrefix, events, now)
-	err := m.deliver(subject, body)
+	err := m.deliver(m.render(events, now, false))
 
 	if errors.Is(err, errDisabled) {
 		return
@@ -114,12 +130,11 @@ func (m *Mailer) Flush(now time.Time) {
 }
 
 // SendTest bypasses the queue and the budget: it is how you find out whether
-// the SMTP account works, so it must report the error instead of retrying.
+// the SMTP account works, so it must report the error instead of retrying. It
+// carries one made-up alert of every kind, so it also shows what real mails
+// look like before the first real one arrives.
 func (m *Mailer) SendTest(now time.Time) error {
-	host, _ := os.Hostname()
-	body := fmt.Sprintf("This is a test mail from mqtt-mail.\n\nSent: %s\nHost: %s\n",
-		now.Format(time.RFC1123), host)
-	err := m.deliver(prefixed(m.cfg.SubjectPrefix, "Test mail"), body)
+	err := m.deliver(m.render(demoEvents(now), now, true))
 
 	m.mu.Lock()
 	if err != nil {
@@ -140,16 +155,16 @@ func (m *Mailer) SendTest(now time.Time) error {
 	return err
 }
 
-func (m *Mailer) deliver(subject, body string) error {
+func (m *Mailer) deliver(mail Mail) error {
 	if !m.cfg.SMTP.Enabled {
-		logger.Info("Mail disabled, not sending", "subject", subject)
+		logger.Info("Mail disabled, not sending", "subject", mail.Subject)
 		return errDisabled
 	}
-	if err := m.send(m.cfg.SMTP, subject, body); err != nil {
-		logger.Error("Failed to send mail", "subject", subject, "error", err)
+	if err := m.send(m.cfg.SMTP, mail); err != nil {
+		logger.Error("Failed to send mail", "subject", mail.Subject, "error", err)
 		return err
 	}
-	logger.Info("Mail sent", "subject", subject)
+	logger.Info("Mail sent", "subject", mail.Subject)
 	return nil
 }
 
@@ -196,70 +211,9 @@ func prefixed(prefix, subject string) string {
 	return prefix + " " + subject
 }
 
-var kindLabel = map[string]string{
-	EventFiring:   "ALERT",
-	EventResolved: "RESOLVED",
-	EventReminder: "STILL FIRING",
-}
-
-// compose renders a batch of events as one plain-text mail.
-func compose(prefix string, events []Event, now time.Time) (string, string) {
-	counts := map[string]int{}
-	for _, ev := range events {
-		counts[ev.Kind]++
-	}
-
-	var subject string
-	if len(events) == 1 {
-		ev := events[0]
-		subject = fmt.Sprintf("%s %s: %s", kindLabel[ev.Kind], ev.Alert.Rule, ev.Alert.Topic)
-	} else {
-		var parts []string
-		for _, kind := range []string{EventFiring, EventReminder, EventResolved} {
-			if counts[kind] > 0 {
-				parts = append(parts, fmt.Sprintf("%d %s", counts[kind], strings.ToLower(kindLabel[kind])))
-			}
-		}
-		subject = fmt.Sprintf("%d alerts (%s)", len(events), strings.Join(parts, ", "))
-	}
-
-	var b strings.Builder
-	for _, kind := range []string{EventFiring, EventReminder, EventResolved} {
-		if counts[kind] == 0 {
-			continue
-		}
-		fmt.Fprintf(&b, "%s\n%s\n\n", kindLabel[kind], strings.Repeat("=", len(kindLabel[kind])))
-		for _, ev := range events {
-			if ev.Kind != kind {
-				continue
-			}
-			a := ev.Alert
-			fmt.Fprintf(&b, "%s\n", a.Topic)
-			fmt.Fprintf(&b, "  rule:   %s", a.Rule)
-			if a.Description != "" {
-				fmt.Fprintf(&b, " - %s", a.Description)
-			}
-			b.WriteString("\n")
-			if a.Value != "" {
-				fmt.Fprintf(&b, "  value:  %s\n", a.Value)
-			}
-			if !a.Since.IsZero() {
-				fmt.Fprintf(&b, "  since:  %s\n", a.Since.Local().Format("Mon 02 Jan 15:04:05"))
-			}
-			if ev.Duration != "" {
-				fmt.Fprintf(&b, "  firing: %s\n", ev.Duration)
-			}
-			fmt.Fprintf(&b, "  at:     %s\n\n", ev.At.Local().Format("Mon 02 Jan 15:04:05"))
-		}
-	}
-	fmt.Fprintf(&b, "-- \nmqtt-mail, %s\n", now.Local().Format(time.RFC1123))
-
-	return prefixed(prefix, subject), b.String()
-}
-
 // SendSMTP delivers over SMTP with STARTTLS (net/smtp upgrades on its own when
 // the server offers it, and refuses to send credentials in the clear).
-func SendSMTP(cfg config.SMTPConfig, subject, body string) error {
+func SendSMTP(cfg config.SMTPConfig, mail Mail) error {
 	if cfg.Host == "" || cfg.From == "" || cfg.To == "" {
 		return fmt.Errorf("smtp host, from and to are required")
 	}
@@ -273,18 +227,17 @@ func SendSMTP(cfg config.SMTPConfig, subject, body string) error {
 
 	host, _ := os.Hostname()
 	now := time.Now()
-	headers := []string{
+	contentHeaders, body := mimeBody(mail, fmt.Sprintf("mqtt-mail-%d", now.UnixNano()))
+	headers := append([]string{
 		"From: " + cfg.From,
 		"To: " + strings.Join(to, ", "),
-		"Subject: " + mime.QEncoding.Encode("utf-8", subject),
+		"Subject: " + mime.QEncoding.Encode("utf-8", mail.Subject),
 		"Date: " + now.Format(time.RFC1123Z),
 		fmt.Sprintf("Message-ID: <%d.mqtt-mail@%s>", now.UnixNano(), host),
 		"MIME-Version: 1.0",
-		"Content-Type: text/plain; charset=utf-8",
-		"Content-Transfer-Encoding: 8bit",
 		"Auto-Submitted: auto-generated",
-	}
-	msg := strings.Join(headers, "\r\n") + "\r\n\r\n" + strings.ReplaceAll(body, "\n", "\r\n")
+	}, contentHeaders...)
+	msg := strings.Join(headers, "\r\n") + "\r\n\r\n" + body
 
 	var auth smtp.Auth
 	if cfg.Username != "" {

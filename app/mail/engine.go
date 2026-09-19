@@ -25,14 +25,18 @@ const (
 // Alert is one rule evaluated against one concrete topic.
 // Keep the JSON tags snake_case — the whole house reads these payloads.
 type Alert struct {
-	Rule        string     `json:"rule"`
-	Description string     `json:"description,omitempty"`
-	Type        string     `json:"type"`
-	Topic       string     `json:"topic"`
-	State       string     `json:"state"`
-	Value       string     `json:"value,omitempty"`
-	Since       time.Time  `json:"since"`
-	FiredAt     *time.Time `json:"fired_at,omitempty"`
+	Rule string `json:"rule"`
+	// Title is the human readable headline ("haus/shelly is offline").
+	Title       string `json:"title"`
+	Description string `json:"description,omitempty"`
+	// Check is the rule in words ("payload = \"offline\" for 10m").
+	Check   string     `json:"check,omitempty"`
+	Type    string     `json:"type"`
+	Topic   string     `json:"topic"`
+	State   string     `json:"state"`
+	Value   string     `json:"value,omitempty"`
+	Since   time.Time  `json:"since"`
+	FiredAt *time.Time `json:"fired_at,omitempty"`
 }
 
 // Event is an alert transition worth telling someone about.
@@ -52,6 +56,7 @@ type RuleInfo struct {
 	Summary     string   `json:"summary"`
 	Watching    int      `json:"watching"`
 	Firing      int      `json:"firing"`
+	Pending     int      `json:"pending"`
 }
 
 type MailStats struct {
@@ -80,8 +85,14 @@ type StatusListener func(Status)
 
 // instance is the mutable per-(rule, topic) state behind an Alert.
 type instance struct {
-	rule  *Rule
-	topic string
+	rule *Rule
+	// topic is the concrete topic, or for a group rule the filter it stands for.
+	topic  string
+	device string
+
+	// count: last matching payload, to recognise a duplicate delivery
+	lastHit   string
+	lastHitAt time.Time
 
 	// state / count: when the condition started to hold (zero: it doesn't)
 	matchSince time.Time
@@ -135,8 +146,13 @@ func NewEngine(cfgs []config.RuleConfig, now time.Time) (*Engine, error) {
 			continue
 		}
 		for _, f := range r.cfg.Topics {
-			if isConcrete(f) && r.appliesTo(f) {
-				e.instanceFor(r, f).lastSeen = now
+			switch {
+			case r.cfg.Group:
+				// The whole filter is one thing to watch, and "never heard
+				// anything" is the failure we are after.
+				e.instanceFor(r, f, groupName(f)).lastSeen = now
+			case isConcrete(f) && r.appliesTo(f):
+				e.instanceFor(r, f, deviceName(f, f)).lastSeen = now
 			}
 		}
 	}
@@ -182,15 +198,21 @@ func (e *Engine) Subscriptions() []string {
 
 func key(rule, topic string) string { return rule + "\x00" + topic }
 
-func (e *Engine) instanceFor(r *Rule, topic string) *instance {
+func (e *Engine) instanceFor(r *Rule, topic, device string) *instance {
 	k := key(r.Name(), topic)
 	inst, ok := e.instances[k]
 	if !ok {
-		inst = &instance{rule: r, topic: topic}
+		inst = &instance{rule: r, topic: topic, device: device}
 		e.instances[k] = inst
 	}
 	return inst
 }
+
+// duplicateWindow is how close two identical payloads have to be to count as
+// one. Overlapping subscriptions ("+/+/bridge/logs" and "haus/unifi-access/#")
+// can make the broker deliver a message once per subscription, which would
+// double every count.
+const duplicateWindow = 250 * time.Millisecond
 
 // HandleMessage feeds one MQTT message through every rule that watches it.
 func (e *Engine) HandleMessage(topic string, payload []byte, now time.Time) {
@@ -199,10 +221,16 @@ func (e *Engine) HandleMessage(topic string, payload []byte, now time.Time) {
 	e.mu.Lock()
 	e.messages++
 	for _, r := range e.rules {
-		if !r.appliesTo(topic) {
+		filter, ok := r.matchedFilter(topic)
+		if !ok {
 			continue
 		}
-		inst := e.instanceFor(r, topic)
+		var inst *instance
+		if r.cfg.Group {
+			inst = e.instanceFor(r, filter, groupName(filter))
+		} else {
+			inst = e.instanceFor(r, topic, deviceName(filter, topic))
+		}
 
 		switch r.cfg.Type {
 		case config.RuleSilence:
@@ -228,6 +256,11 @@ func (e *Engine) HandleMessage(topic string, payload []byte, now time.Time) {
 
 		case config.RuleCount:
 			if ok, value := r.matches(payload); ok {
+				raw := string(payload)
+				if raw == inst.lastHit && now.Sub(inst.lastHitAt) < duplicateWindow {
+					continue
+				}
+				inst.lastHit, inst.lastHitAt = raw, now
 				inst.hits = append(inst.hits, now)
 				inst.value = value
 			}
@@ -312,6 +345,12 @@ func (e *Engine) resolve(inst *instance, now time.Time) Event {
 		Kind: EventResolved, At: now, Alert: e.alertOf(inst),
 		Duration: humanDuration(now.Sub(inst.firedAt)),
 	}
+	ev.Alert.Title = inst.rule.resolvedTitle(inst.device, inst.topic, inst.value)
+	if inst.rule.cfg.Type != config.RuleState {
+		// For a state rule the value is what the topic says *now* and worth
+		// showing. "no message for 47m" on a recovery is just confusing.
+		ev.Alert.Value = ""
+	}
 	inst.firing = false
 	inst.firedAt = time.Time{}
 	inst.matchSince = time.Time{}
@@ -330,7 +369,9 @@ func (e *Engine) record(ev Event) Event {
 func (e *Engine) alertOf(inst *instance) Alert {
 	a := Alert{
 		Rule:        inst.rule.Name(),
+		Title:       inst.rule.title(inst.device, inst.topic, inst.value),
 		Description: inst.rule.cfg.Description,
+		Check:       inst.rule.summary(),
 		Type:        inst.rule.cfg.Type,
 		Topic:       inst.topic,
 		Value:       inst.value,
@@ -396,11 +437,14 @@ func (e *Engine) GetStatus() Status {
 
 	watching := map[string]int{}
 	firing := map[string]int{}
+	pendingCount := map[string]int{}
 	for _, inst := range e.instances {
 		watching[inst.rule.Name()]++
 		pending := !inst.matchSince.IsZero() && inst.rule.cfg.Type == config.RuleState
 		if inst.firing {
 			firing[inst.rule.Name()]++
+		} else if pending {
+			pendingCount[inst.rule.Name()]++
 		}
 		if inst.firing || pending {
 			status.Alerts = append(status.Alerts, e.alertOf(inst))
@@ -415,6 +459,7 @@ func (e *Engine) GetStatus() Status {
 			Summary:     r.summary(),
 			Watching:    watching[r.Name()],
 			Firing:      firing[r.Name()],
+			Pending:     pendingCount[r.Name()],
 		})
 	}
 	e.mu.Unlock()

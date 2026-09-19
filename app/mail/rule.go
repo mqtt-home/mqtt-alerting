@@ -65,6 +65,10 @@ func compileRule(rc config.RuleConfig) (*Rule, error) {
 		return nil, fmt.Errorf("unknown type %q (state, count, silence)", rc.Type)
 	}
 
+	if rc.Group && rc.Type != config.RuleSilence {
+		return nil, fmt.Errorf("group is only valid for type %q", config.RuleSilence)
+	}
+
 	if c := rc.Condition; c != nil {
 		if c.Equals == nil && c.NotEquals == nil && c.Regex == "" && c.LT == nil && c.GT == nil {
 			return nil, fmt.Errorf("condition has no operator")
@@ -85,17 +89,83 @@ func (r *Rule) Name() string { return r.cfg.Name }
 
 // appliesTo reports whether the rule watches this concrete topic.
 func (r *Rule) appliesTo(topic string) bool {
+	_, ok := r.matchedFilter(topic)
+	return ok
+}
+
+// matchedFilter returns the first of the rule's filters that matches the topic.
+func (r *Rule) matchedFilter(topic string) (string, bool) {
 	for _, ex := range r.cfg.Exclude {
 		if topicMatches(ex, topic) {
-			return false
+			return "", false
 		}
 	}
 	for _, f := range r.cfg.Topics {
 		if topicMatches(f, topic) {
-			return true
+			return f, true
 		}
 	}
-	return false
+	return "", false
+}
+
+// deviceName is what the wildcards of a filter matched, which is nearly always
+// the name of the thing: "+/+/bridge/state" on "haus/shelly/bridge/state" gives
+// "haus/shelly", "zigbee2mqtt/+" gives the sensor. A filter without wildcards
+// names the thing itself.
+func deviceName(filter, topic string) string {
+	f := strings.Split(filter, "/")
+	t := strings.Split(topic, "/")
+	var parts []string
+	for i, part := range f {
+		if part == "#" {
+			parts = append(parts, t[min(i, len(t)):]...)
+			break
+		}
+		if part == "+" && i < len(t) {
+			parts = append(parts, t[i])
+		}
+	}
+	if len(parts) == 0 {
+		return topic
+	}
+	return strings.Join(parts, "/")
+}
+
+// groupName is the display name of a whole filter: "wolf-cwl/#" -> "wolf-cwl".
+func groupName(filter string) string {
+	name := strings.TrimSuffix(strings.TrimSuffix(filter, "#"), "/")
+	if name == "" {
+		return filter
+	}
+	return name
+}
+
+// resolvedTitle is the headline of the recovery. Reusing the alert title there
+// reads as the opposite of what happened ("Working again: x is offline").
+func (r *Rule) resolvedTitle(device, topic, value string) string {
+	tpl := r.cfg.ResolvedTitle
+	if tpl == "" {
+		tpl = "{device}: back to normal"
+	}
+	return r.render(tpl, device, topic, value)
+}
+
+// title renders the rule's title template for one alert.
+func (r *Rule) title(device, topic, value string) string {
+	tpl := r.cfg.Title
+	if tpl == "" {
+		tpl = "{device}"
+	}
+	return r.render(tpl, device, topic, value)
+}
+
+func (r *Rule) render(tpl, device, topic, value string) string {
+	return strings.NewReplacer(
+		"{device}", device,
+		"{topic}", topic,
+		"{value}", value,
+		"{rule}", r.cfg.Name,
+	).Replace(tpl)
 }
 
 // matches evaluates the condition and returns the value it looked at, which

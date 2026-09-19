@@ -2,6 +2,8 @@
 // shape goes out over MQTT (`<topic>/status`) and over SSE.
 export interface Alert {
   rule: string;
+  title: string;
+  check?: string;
   description?: string;
   type: 'state' | 'count' | 'silence';
   topic: string;
@@ -26,6 +28,7 @@ export interface RuleInfo {
   summary: string;
   watching: number;
   firing: number;
+  pending: number;
 }
 
 export interface MailStats {

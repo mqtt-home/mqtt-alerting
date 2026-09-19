@@ -16,40 +16,111 @@
       "to": "${MAIL_TO}"
     },
     "subject_prefix": "[smarthome]",
-    "batch_seconds": 30,
-    "max_mails_per_hour": 12,
+    "ui_url": "https://mail.example.com",
+    "batch_seconds": 60,
+    "max_mails_per_hour": 6,
     "rules": [
       {
         "name": "bridge-offline",
-        "description": "a bridge reports offline",
+        "description": "a bridge lost its connection to the broker or crashed",
+        "title": "{device} bridge is offline",
+        "resolved_title": "{device} bridge is back online",
         "type": "state",
-        "topics": ["+/bridge/state", "+/+/bridge/state"],
-        "exclude": ["test/#"],
-        "condition": { "equals": "offline" },
+        "topics": [
+          "+/bridge/state",
+          "+/+/bridge/state"
+        ],
+        "exclude": [
+          "test/#"
+        ],
+        "condition": {
+          "equals": "offline"
+        },
         "for": "10m",
         "repeat": "24h"
       },
       {
         "name": "zigbee2mqtt-offline",
+        "description": "zigbee2mqtt publishes its state as JSON",
+        "title": "zigbee2mqtt is offline",
+        "resolved_title": "zigbee2mqtt is back online",
         "type": "state",
-        "topics": ["zigbee2mqtt/bridge/state"],
-        "condition": { "field": "state", "equals": "offline" },
-        "for": "10m"
+        "topics": [
+          "zigbee2mqtt/bridge/state"
+        ],
+        "condition": {
+          "field": "state",
+          "equals": "offline"
+        },
+        "for": "10m",
+        "repeat": "24h"
+      },
+      {
+        "name": "device-unavailable",
+        "description": "the bridge runs, but cannot reach the device behind it",
+        "title": "{device} is unreachable",
+        "resolved_title": "{device} is reachable again",
+        "type": "state",
+        "topics": [
+          "+/+/availability",
+          "+/availability",
+          "+/+/+/availability"
+        ],
+        "exclude": [
+          "test/#"
+        ],
+        "condition": {
+          "equals": "offline"
+        },
+        "for": "30m",
+        "repeat": "24h"
       },
       {
         "name": "reconnect-loop",
-        "description": "device looks alive but keeps reconnecting",
+        "description": "looks alive but keeps reconnecting or restarting",
+        "title": "{device} is stuck in a reconnect loop",
+        "resolved_title": "{device} stopped reconnecting",
         "type": "count",
-        "topics": ["+/+/bridge/logs"],
-        "condition": { "regex": "Reconnect attempt|WATCHDOG" },
+        "topics": [
+          "+/+/bridge/logs"
+        ],
+        "condition": {
+          "regex": "Reconnect attempt|WATCHDOG|Connection failed"
+        },
         "count": 8,
-        "within": "15m"
+        "within": "15m",
+        "repeat": "24h"
       },
       {
-        "name": "power-meter-silent",
+        "name": "data-silent",
+        "description": "a service that normally publishes all the time went quiet",
+        "title": "{device} stopped publishing",
+        "resolved_title": "{device} publishes again",
         "type": "silence",
-        "topics": ["haus/strom"],
-        "for": "15m"
+        "group": true,
+        "topics": [
+          "zigbee2mqtt/#",
+          "hue/#",
+          "haus/strom"
+        ],
+        "for": "30m",
+        "repeat": "24h"
+      },
+      {
+        "name": "battery-low",
+        "description": "a Zigbee sensor battery needs replacing",
+        "title": "{device}: battery at {value} %",
+        "resolved_title": "{device}: battery replaced",
+        "type": "state",
+        "topics": [
+          "zigbee2mqtt/+"
+        ],
+        "condition": {
+          "field": "battery",
+          "lt": 15
+        },
+        "for": "1h",
+        "repeat": "168h"
       }
     ]
   },

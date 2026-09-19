@@ -38,7 +38,8 @@ function AlertRow({ alert }: { alert: Alert }) {
           ? <BellRing className="mt-0.5 h-5 w-5 shrink-0 text-red-500" />
           : <Clock className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />}
         <div className="min-w-0 flex-1">
-          <div className="break-all font-mono text-sm">{alert.topic}</div>
+          <div className="font-medium">{alert.title}</div>
+          <div className="break-all font-mono text-xs text-muted-foreground">{alert.topic}</div>
           <div className="text-sm text-muted-foreground">
             {alert.rule}{alert.value ? <> · <span className="font-mono">{alert.value}</span></> : null}
           </div>
@@ -59,6 +60,7 @@ function RuleRow({ rule }: { rule: RuleInfo }) {
         <div className="font-medium">{rule.name}</div>
         <div className="shrink-0 text-xs text-muted-foreground">
           {rule.firing > 0 && <span className="mr-2 font-medium text-red-500">{rule.firing} firing</span>}
+          {rule.pending > 0 && <span className="mr-2 font-medium text-amber-500">{rule.pending} pending</span>}
           {rule.watching} watched · {rule.type}
         </div>
       </div>
@@ -80,7 +82,7 @@ function HistoryRow({ event }: { event: AlertEvent }) {
     <div className="flex items-baseline gap-3 border-b py-1.5 text-sm last:border-b-0">
       <span className="w-32 shrink-0 text-xs text-muted-foreground">{time(event.at)}</span>
       <span className={`w-16 shrink-0 text-xs font-medium ${kindStyle[event.kind]}`}>{event.kind}</span>
-      <span className="min-w-0 flex-1 break-all font-mono text-xs">{event.alert.topic}</span>
+      <span className="min-w-0 flex-1 break-words text-xs" title={event.alert.topic}>{event.alert.title}</span>
       <span className="shrink-0 text-xs text-muted-foreground">{event.duration ?? event.alert.rule}</span>
     </div>
   );
