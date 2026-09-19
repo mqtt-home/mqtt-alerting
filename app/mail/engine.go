@@ -71,14 +71,17 @@ type MailStats struct {
 
 // Status is what gets published to `<topic>/status` and pushed over SSE.
 type Status struct {
-	Online    bool       `json:"online"`
-	UpdatedAt time.Time  `json:"updated_at"`
-	StartedAt time.Time  `json:"started_at"`
-	Messages  int64      `json:"messages"`
-	Rules     []RuleInfo `json:"rules"`
-	Alerts    []Alert    `json:"alerts"`
-	History   []Event    `json:"history"`
-	Mail      MailStats  `json:"mail"`
+	Online    bool      `json:"online"`
+	UpdatedAt time.Time `json:"updated_at"`
+	StartedAt time.Time `json:"started_at"`
+	Messages  int64     `json:"messages"`
+	// Dropped counts messages discarded because the engine could not keep up.
+	// Anything but zero deserves a look.
+	Dropped int64      `json:"dropped"`
+	Rules   []RuleInfo `json:"rules"`
+	Alerts  []Alert    `json:"alerts"`
+	History []Event    `json:"history"`
+	Mail    MailStats  `json:"mail"`
 }
 
 type StatusListener func(Status)
@@ -120,10 +123,14 @@ type Engine struct {
 	history   []Event
 	messages  int64
 	startedAt time.Time
+	// liveness: when the engine last ticked and last saw a message
+	lastTick    time.Time
+	lastMessage time.Time
 
 	onEvent   func(Event)
 	listeners []StatusListener
 	mailStats func() MailStats
+	dropped   func() int64
 }
 
 func NewEngine(cfgs []config.RuleConfig, now time.Time) (*Engine, error) {
@@ -163,6 +170,7 @@ func NewEngine(cfgs []config.RuleConfig, now time.Time) (*Engine, error) {
 func (e *Engine) OnEvent(f func(Event))                    { e.onEvent = f }
 func (e *Engine) AddStatusChangeListener(l StatusListener) { e.listeners = append(e.listeners, l) }
 func (e *Engine) SetMailStats(f func() MailStats)          { e.mailStats = f }
+func (e *Engine) SetDroppedCounter(f func() int64)         { e.dropped = f }
 
 // Subscriptions returns the MQTT filters to subscribe to, with filters that
 // another one already covers removed — overlapping subscriptions would deliver
@@ -220,6 +228,26 @@ func (e *Engine) HandleMessage(topic string, payload []byte, now time.Time) {
 
 	e.mu.Lock()
 	e.messages++
+	e.lastMessage = now
+
+	// An empty payload is how a retained message gets deleted: the thing is
+	// gone for good (a device that was removed), not merely fine again. Forget
+	// it, otherwise its last state would be watched and reported forever.
+	if len(payload) == 0 {
+		for k, inst := range e.instances {
+			if inst.topic != topic || inst.rule.cfg.Group {
+				continue
+			}
+			if inst.firing {
+				events = append(events, e.resolve(inst, now))
+			}
+			delete(e.instances, k)
+		}
+		e.mu.Unlock()
+		e.emit(events)
+		return
+	}
+
 	for _, r := range e.rules {
 		filter, ok := r.matchedFilter(topic)
 		if !ok {
@@ -276,6 +304,9 @@ func (e *Engine) HandleMessage(topic string, payload []byte, now time.Time) {
 // Tick advances time: pending alerts fire, silent topics are noticed, counts
 // expire, reminders go out.
 func (e *Engine) Tick(now time.Time) {
+	e.mu.Lock()
+	e.lastTick = now
+	e.mu.Unlock()
 	e.emit(e.evaluate(now))
 }
 
@@ -478,13 +509,45 @@ func (e *Engine) GetStatus() Status {
 	if e.mailStats != nil {
 		status.Mail = e.mailStats()
 	}
+	if e.dropped != nil {
+		status.Dropped = e.dropped()
+	}
 	return status
 }
 
-// IsConnected feeds the liveness probe. The engine has no upstream connection
-// of its own — a broken SMTP account is reported in the status, since
-// restarting the pod would not fix it.
-func (e *Engine) IsConnected() bool { return true }
+// How long the engine may go without ticking / without any message before it
+// counts as stuck. Every watched service publishes at least every few minutes,
+// so total silence means our own subscription is dead, not the house.
+const (
+	maxTickAge    = time.Minute
+	maxMessageAge = 10 * time.Minute
+)
+
+// IsConnected feeds the liveness probe: the engine is alive if it still ticks
+// and still hears something. A monitor that has silently stopped is worse than
+// none, so it has to be able to notice that about itself and get restarted.
+// (A broken SMTP account is reported in the status instead — a restart would
+// not fix that.)
+func (e *Engine) IsConnected() bool {
+	return e.healthyAt(time.Now())
+}
+
+func (e *Engine) healthyAt(now time.Time) bool {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+
+	lastTick, lastMessage := e.lastTick, e.lastMessage
+	if lastTick.IsZero() {
+		lastTick = e.startedAt
+	}
+	if lastMessage.IsZero() {
+		lastMessage = e.startedAt
+	}
+	if len(e.rules) == 0 {
+		lastMessage = now // nothing subscribed, nothing to hear
+	}
+	return now.Sub(lastTick) < maxTickAge && now.Sub(lastMessage) < maxMessageAge
+}
 
 // Run ticks until stop is closed.
 func (e *Engine) Run(interval time.Duration, stop <-chan struct{}) {

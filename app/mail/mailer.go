@@ -1,9 +1,11 @@
 package mail
 
 import (
+	"crypto/tls"
 	"errors"
 	"fmt"
 	"mime"
+	"net"
 	"net/smtp"
 	"os"
 	"strings"
@@ -239,10 +241,62 @@ func SendSMTP(cfg config.SMTPConfig, mail Mail) error {
 	}, contentHeaders...)
 	msg := strings.Join(headers, "\r\n") + "\r\n\r\n" + body
 
-	var auth smtp.Auth
-	if cfg.Username != "" {
-		auth = smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)
-	}
 	addr := fmt.Sprintf("%s:%d", cfg.Host, cfg.Port)
-	return smtp.SendMail(addr, auth, cfg.From, to, []byte(msg))
+	return sendWithTimeout(addr, cfg, to, []byte(msg))
+}
+
+// smtpTimeout bounds the whole conversation with the mail server.
+const smtpTimeout = 45 * time.Second
+
+// sendWithTimeout is smtp.SendMail with a deadline. SendMail has none, so a
+// mail server that accepts the connection and then goes quiet would block the
+// mailer forever — and with it every later alert.
+func sendWithTimeout(addr string, cfg config.SMTPConfig, to []string, msg []byte) error {
+	conn, err := net.DialTimeout("tcp", addr, 15*time.Second)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if err := conn.SetDeadline(time.Now().Add(smtpTimeout)); err != nil {
+		return err
+	}
+
+	c, err := smtp.NewClient(conn, cfg.Host)
+	if err != nil {
+		return err
+	}
+	defer c.Close()
+
+	if ok, _ := c.Extension("STARTTLS"); ok {
+		if err := c.StartTLS(&tls.Config{ServerName: cfg.Host}); err != nil {
+			return err
+		}
+	} else if cfg.Username != "" {
+		// Same rule as smtp.SendMail: never send credentials in the clear.
+		return fmt.Errorf("smtp server %s does not offer STARTTLS, refusing to authenticate", cfg.Host)
+	}
+	if cfg.Username != "" {
+		if err := c.Auth(smtp.PlainAuth("", cfg.Username, cfg.Password, cfg.Host)); err != nil {
+			return err
+		}
+	}
+	if err := c.Mail(cfg.From); err != nil {
+		return err
+	}
+	for _, rcpt := range to {
+		if err := c.Rcpt(rcpt); err != nil {
+			return err
+		}
+	}
+	w, err := c.Data()
+	if err != nil {
+		return err
+	}
+	if _, err := w.Write(msg); err != nil {
+		return err
+	}
+	if err := w.Close(); err != nil {
+		return err
+	}
+	return c.Quit()
 }

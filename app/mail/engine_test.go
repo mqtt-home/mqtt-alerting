@@ -541,3 +541,61 @@ func TestResolvedTitleAndCurrentValue(t *testing.T) {
 		t.Fatalf("got %q / %q", last.Alert.Title, last.Alert.Value)
 	}
 }
+
+// A device that was removed: its retained message gets deleted (empty payload).
+func TestDeletedRetainedMessageForgetsTheDevice(t *testing.T) {
+	e, got := newEngine(t, `[{
+		"name": "shelly", "type": "state", "topics": ["shelly/+/+/+/online"],
+		"title": "Shelly {device} is unreachable", "condition": {"equals": "false"}, "for": "15m"
+	}]`)
+
+	e.HandleMessage("shelly/eg/wohnzimmer/ost/online", []byte("false"), t0)
+	e.HandleMessage("shelly/og/leni/east/online", []byte("true"), t0)
+	e.Tick(t0.Add(16 * time.Minute))
+	if kinds(*got) != "firing:shelly/eg/wohnzimmer/ost/online" {
+		t.Fatalf("got %q", kinds(*got))
+	}
+
+	e.HandleMessage("shelly/eg/wohnzimmer/ost/online", nil, t0.Add(20*time.Minute))
+
+	if (*got)[len(*got)-1].Kind != EventResolved {
+		t.Fatalf("still firing after the topic was deleted: %s", kinds(*got))
+	}
+	st := e.GetStatus()
+	if len(st.Alerts) != 0 || st.Rules[0].Watching != 1 {
+		t.Fatalf("deleted device is still tracked: alerts=%d watching=%d", len(st.Alerts), st.Rules[0].Watching)
+	}
+	// ...and it must not come back by itself.
+	e.Tick(t0.Add(2 * time.Hour))
+	if n := len(*got); n != 2 {
+		t.Fatalf("got %d events: %s", n, kinds(*got))
+	}
+}
+
+// v0.2.0 stopped processing messages and ticking after four hours while
+// /livez kept answering "healthy", so nothing restarted it.
+func TestLivenessNoticesAStuckEngine(t *testing.T) {
+	e, _ := newEngine(t, offlineRule)
+
+	if !e.healthyAt(t0.Add(30 * time.Second)) {
+		t.Fatal("unhealthy right after start")
+	}
+
+	e.Tick(t0.Add(5 * time.Minute))
+	e.HandleMessage("hue/bridge/state", []byte("online"), t0.Add(5*time.Minute))
+	if !e.healthyAt(t0.Add(5*time.Minute + 10*time.Second)) {
+		t.Fatal("unhealthy while ticking and receiving")
+	}
+
+	// still ticking, but deaf: the subscription died
+	e.Tick(t0.Add(16 * time.Minute))
+	if e.healthyAt(t0.Add(16*time.Minute + time.Second)) {
+		t.Fatal("healthy although no message arrived for 11 minutes")
+	}
+
+	// receiving, but the tick loop is wedged
+	e.HandleMessage("hue/bridge/state", []byte("online"), t0.Add(20*time.Minute))
+	if e.healthyAt(t0.Add(20*time.Minute + time.Second)) {
+		t.Fatal("healthy although the engine stopped ticking")
+	}
+}

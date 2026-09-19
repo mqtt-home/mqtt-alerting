@@ -46,6 +46,7 @@ export interface Status {
   updated_at: string;
   started_at: string;
   messages: number;
+  dropped: number;
   rules: RuleInfo[];
   alerts: Alert[];
   history: AlertEvent[];

@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/signal"
 	"strconv"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -26,7 +27,38 @@ var (
 
 // publishStatus mirrors the alert state onto `<topic>/status`. Retained, so a
 // consumer that subscribes later immediately sees the current state.
+//
+// It only hands the status over. Publishing waits for the broker's
+// acknowledgement, and the engine calls this from wherever an alert changed —
+// including, indirectly, from inside an MQTT message callback, where waiting
+// for an acknowledgement deadlocks the client (v0.2.0 wedged itself that way
+// after four hours). Only the newest status matters, so a slow broker makes
+// this skip statuses instead of queueing them.
 func publishStatus(status mail.Status) {
+	select {
+	case <-statusQueue: // drop the one nobody picked up yet
+	default:
+	}
+	select {
+	case statusQueue <- status:
+	default: // a concurrent caller got there first; its status is just as new
+	}
+}
+
+var statusQueue = make(chan mail.Status, 1)
+
+func runStatusPublisher(stop <-chan struct{}) {
+	for {
+		select {
+		case status := <-statusQueue:
+			sendStatus(status)
+		case <-stop:
+			return
+		}
+	}
+}
+
+func sendStatus(status mail.Status) {
 	cfg := config.Get()
 	topic := cfg.MQTT.Topic + "/status"
 
@@ -102,12 +134,46 @@ func dispatchCommand(action string) {
 }
 
 // subscribeToRules feeds every topic a rule watches into the engine.
+//
+// The callback does nothing but enqueue: the MQTT client delivers messages one
+// at a time and cannot read anything else from the broker (acknowledgements,
+// pings) while a callback runs. Rule evaluation can publish and send mail, so
+// it happens on a worker.
 func subscribeToRules() {
 	for _, filter := range engine.Subscriptions() {
 		logger.Info("Watching", "topic", filter)
 		mqtt.Subscribe(filter, func(topic string, payload []byte) {
-			engine.HandleMessage(topic, payload, time.Now())
+			msg := inbound{topic: topic, payload: append([]byte(nil), payload...), at: time.Now()}
+			select {
+			case inboundQueue <- msg:
+			default:
+				// Falling this far behind means the worker is stuck; the
+				// liveness probe will notice. Never block the client.
+				dropped.Add(1)
+			}
 		})
+	}
+}
+
+type inbound struct {
+	topic   string
+	payload []byte
+	at      time.Time
+}
+
+var (
+	inboundQueue = make(chan inbound, 4096)
+	dropped      atomic.Int64
+)
+
+func runInboundWorker(stop <-chan struct{}) {
+	for {
+		select {
+		case msg := <-inboundQueue:
+			engine.HandleMessage(msg.topic, msg.payload, msg.at)
+		case <-stop:
+			return
+		}
 	}
 }
 
@@ -160,6 +226,7 @@ func main() {
 	engine.OnEvent(mailer.Enqueue)
 	engine.SetMailStats(mailer.Stats)
 	mailer.SetSnapshot(engine.GetStatus)
+	engine.SetDroppedCounter(dropped.Load)
 	engine.AddStatusChangeListener(publishStatus)
 
 	publishAvailability(true)
@@ -168,6 +235,8 @@ func main() {
 	subscribeToRules()
 
 	stop := make(chan struct{})
+	go runStatusPublisher(stop)
+	go runInboundWorker(stop)
 	go engine.Run(5*time.Second, stop)
 	go mailer.Run(5*time.Second, stop)
 
@@ -190,7 +259,10 @@ func main() {
 	<-quitChannel
 
 	close(stop)
-	publishAvailability(false)
+	// No "offline" here: in a rolling update the replacement is already up and
+	// has said "online", and this process saying "offline" on its way out is
+	// exactly the stale state this service exists to catch (it alerted on
+	// itself). A crash is covered by the will on bridge/state.
 	// Clean DISCONNECT: a planned shutdown must not fire the "offline" will.
 	mqtt.Stop()
 	logger.Info("Shutdown complete")
