@@ -65,8 +65,10 @@ function RuleRow({ rule }: { rule: RuleInfo }) {
         </div>
       </div>
       {rule.description && <div className="text-sm text-muted-foreground">{rule.description}</div>}
-      <div className="mt-1 text-sm">{rule.summary}</div>
-      <div className="mt-1 break-all font-mono text-xs text-muted-foreground">{rule.topics.join('  ')}</div>
+      {rule.type !== 'promql' && <div className="mt-1 text-sm">{rule.summary}</div>}
+      <div className="mt-1 break-all font-mono text-xs text-muted-foreground">
+        {rule.type === 'promql' ? rule.summary : (rule.topics ?? []).join('  ')}
+      </div>
     </div>
   );
 }
@@ -144,7 +146,7 @@ export function App() {
   const { status, isConnected, error, reconnect } = useSSE();
   const { theme, toggleTheme } = useTheme();
 
-  const firing = status?.alerts.filter(a => a.state === 'firing').length ?? 0;
+  const firing = (status?.alerts ?? []).filter(a => a.state === 'firing').length;
 
   return (
     <div className="min-h-screen bg-background text-foreground">
@@ -178,14 +180,14 @@ export function App() {
         ) : (
           <>
             <Section title={firing > 0 ? `${firing} firing` : 'Alerts'}>
-              {status.alerts.length === 0 ? (
+              {(status.alerts ?? []).length === 0 ? (
                 <div className="flex items-center gap-3 rounded-lg border border-green-500/40 bg-green-500/10 p-3">
                   <CheckCircle2 className="h-5 w-5 text-green-500" />
                   <span className="text-sm">All quiet. {status.messages.toLocaleString()} messages checked since {time(status.started_at)}.</span>
                 </div>
               ) : (
                 <div className="space-y-2">
-                  {status.alerts.map(a => <AlertRow key={`${a.rule}|${a.topic}`} alert={a} />)}
+                  {(status.alerts ?? []).map(a => <AlertRow key={`${a.rule}|${a.topic}`} alert={a} />)}
                 </div>
               )}
             </Section>
@@ -194,18 +196,18 @@ export function App() {
               <MailCard mail={status.mail} />
             </Section>
 
-            <Section title={`Rules (${status.rules.length})`}>
+            <Section title={`Rules (${(status.rules ?? []).length})`}>
               <div className="space-y-2">
-                {status.rules.map(r => <RuleRow key={r.name} rule={r} />)}
+                {(status.rules ?? []).map(r => <RuleRow key={r.name} rule={r} />)}
               </div>
             </Section>
 
             <Section title="History">
-              {status.history.length === 0 ? (
+              {(status.history ?? []).length === 0 ? (
                 <div className="text-sm text-muted-foreground">Nothing has fired since the service started.</div>
               ) : (
                 <div className="rounded-lg border bg-card px-3 py-1 text-card-foreground">
-                  {status.history.map((e, i) => <HistoryRow key={`${e.at}|${i}`} event={e} />)}
+                  {(status.history ?? []).map((e, i) => <HistoryRow key={`${e.at}|${i}`} event={e} />)}
                 </div>
               )}
             </Section>

@@ -25,6 +25,7 @@ export interface RuleInfo {
   description?: string;
   type: 'state' | 'count' | 'silence' | 'promql';
   topics: string[];
+  query?: string;
   summary: string;
   watching: number;
   firing: number;

@@ -2,6 +2,7 @@ package mail
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -173,5 +174,28 @@ func TestPromQLSeriesWithOnlyPlumbingLabelsStayDistinct(t *testing.T) {
 	titles := (*got)[0].Alert.Title + "|" + (*got)[1].Alert.Title
 	if !strings.Contains(titles, "node-exporter is down") || !strings.Contains(titles, "coredns is down") {
 		t.Fatalf("titles: %s", titles)
+	}
+}
+
+// The web UI iterates over these lists. A nil slice marshals to null, and one
+// null took the whole page down.
+func TestStatusJSONHasNoNullLists(t *testing.T) {
+	e, _ := newEngine(t, diskRule)
+	raw, err := json.Marshal(e.GetStatus())
+	if err != nil {
+		t.Fatal(err)
+	}
+	var generic map[string]any
+	json.Unmarshal(raw, &generic)
+	for _, key := range []string{"rules", "alerts", "history"} {
+		if generic[key] == nil {
+			t.Errorf("%q is null", key)
+		}
+	}
+	for _, r := range generic["rules"].([]any) {
+		rule := r.(map[string]any)
+		if rule["topics"] == nil {
+			t.Errorf("rule %v: topics is null", rule["name"])
+		}
 	}
 }

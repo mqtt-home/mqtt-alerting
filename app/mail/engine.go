@@ -53,10 +53,12 @@ type RuleInfo struct {
 	Description string   `json:"description,omitempty"`
 	Type        string   `json:"type"`
 	Topics      []string `json:"topics"`
-	Summary     string   `json:"summary"`
-	Watching    int      `json:"watching"`
-	Firing      int      `json:"firing"`
-	Pending     int      `json:"pending"`
+	// Query is the PromQL expression of a promql rule.
+	Query    string `json:"query,omitempty"`
+	Summary  string `json:"summary"`
+	Watching int    `json:"watching"`
+	Firing   int    `json:"firing"`
+	Pending  int    `json:"pending"`
 }
 
 type MailStats struct {
@@ -492,11 +494,14 @@ func (e *Engine) GetStatus() Status {
 			Name:        r.Name(),
 			Description: r.cfg.Description,
 			Type:        r.cfg.Type,
-			Topics:      r.cfg.Topics,
-			Summary:     r.summary(),
-			Watching:    watching[r.Name()],
-			Firing:      firing[r.Name()],
-			Pending:     pendingCount[r.Name()],
+			// Never nil: the UI iterates over it, and "topics": null blanked the
+			// whole page the day promql rules (which have no topics) arrived.
+			Topics:   append([]string{}, r.cfg.Topics...),
+			Query:    r.cfg.Query,
+			Summary:  r.summary(),
+			Watching: watching[r.Name()],
+			Firing:   firing[r.Name()],
+			Pending:  pendingCount[r.Name()],
 		})
 	}
 	e.mu.Unlock()
