@@ -64,6 +64,7 @@ receiver nobody reads. A `promql` rule puts them into the same mails instead.
   "name": "node-disk-full",
   "type": "promql",
   "query": "max by (mountpoint) (100 - node_filesystem_avail_bytes / node_filesystem_size_bytes * 100) > 85",
+  "watch": "max by (mountpoint) (node_filesystem_size_bytes)",
   "title": "Disk {mountpoint} is {value} % full",
   "resolved_title": "Disk {mountpoint} has room again",
   "for": "15m",
@@ -80,6 +81,14 @@ receiver nobody reads. A `promql` rule puts them into the same mails instead.
   Labels added by a ServiceMonitor, like the *exporter's* `pod`, are not
   recognisable as such: aggregate them away (`max by (mountpoint) (...)`), or a
   restarted exporter resolves the alert and raises it again.
+- **Give every rule a `watch` query.** A query with a threshold returns nothing
+  while all is well — and also nothing when its metric no longer exists
+  (exporter down, metric renamed, dropped at scrape time). `watch` is the same
+  selection without the threshold. Its series count is what the rule covers, so
+  the overview can say "all 53 fine" instead of a meaningless "0", and when it
+  drops to zero for 15 minutes the built-in alert `promql-rule-blind` fires:
+  *Rule pod-not-running sees no data*. Without `watch` a rule is listed as
+  "coverage unknown".
 - **A Prometheus that does not answer never resolves anything.** Not knowing is
   not the same as being fine. After 10 minutes without an answer the built-in
   alert `prometheus-unreachable` fires instead; it is added automatically as
@@ -136,6 +145,12 @@ is read, then lists what went wrong, what is still not fixed and what works
 again, other problems that are still open, and an overview of every rule with
 what it watches and whether it is fine — so a mail about one broken thing also
 says what works. `ui_url` adds a link to the dashboard.
+
+Every rule is listed with how much of what it watches is fine — "all 19 fine",
+"52 of 53 fine", "nothing seen yet" — next to a checkmark or the number firing.
+"Nothing is firing" and "this rule is not looking at anything" read the same
+otherwise. The dashboard and the `status` topic carry the same numbers
+(`watching`, `ok`, `firing`, `pending`, `blind` per rule).
 
 To look at the styling without sending anything:
 

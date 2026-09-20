@@ -295,6 +295,19 @@ func runPrometheusPoller(pc config.PrometheusConfig, queries []mail.PromQLRule, 
 				continue
 			}
 			engine.HandleQueryResult(q.Name, samples, time.Now())
+
+			if q.Watch == "" {
+				continue
+			}
+			ctx, cancel = context.WithTimeout(context.Background(), pc.Timeout.Std())
+			population, err := mail.QueryPrometheus(ctx, client, pc.URL, q.Watch)
+			cancel()
+			if err != nil {
+				logger.Warn("Prometheus watch query failed", "rule", q.Name, "error", err)
+				engine.HandleQueryError(err, time.Now())
+				continue
+			}
+			engine.HandleWatchResult(q.Name, len(population), time.Now())
 		}
 	}
 

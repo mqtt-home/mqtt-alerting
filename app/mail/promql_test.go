@@ -199,3 +199,108 @@ func TestStatusJSONHasNoNullLists(t *testing.T) {
 		}
 	}
 }
+
+const watchedRule = `[{
+	"name": "pod-not-running", "type": "promql",
+	"query": "max by (namespace, pod) (kube_pod_status_phase{phase=\"Pending\"}) == 1",
+	"watch": "max by (namespace, pod) (kube_pod_status_phase)",
+	"title": "{namespace}/{pod} is stuck", "for": "15m"
+}]`
+
+func ruleInfo(t *testing.T, e *Engine, name string) RuleInfo {
+	t.Helper()
+	for _, r := range e.GetStatus().Rules {
+		if r.Name == name {
+			return r
+		}
+	}
+	t.Fatalf("rule %q not in status", name)
+	return RuleInfo{}
+}
+
+// "0 watched" on a healthy cluster looked like a broken rule. With a watch
+// query the rule says what it covers and how much of it is fine.
+func TestWatchQueryGivesPopulationAndOKCount(t *testing.T) {
+	e, _ := newEngine(t, watchedRule)
+
+	if info := ruleInfo(t, e, "pod-not-running"); !info.Blind || info.OK != 0 {
+		t.Fatalf("before the first watch result the coverage is unknown: %+v", info)
+	}
+
+	e.HandleQueryResult("pod-not-running", nil, t0)
+	e.HandleWatchResult("pod-not-running", 53, t0)
+	if info := ruleInfo(t, e, "pod-not-running"); info.Blind || info.Watching != 53 || info.OK != 53 || info.Firing != 0 {
+		t.Fatalf("healthy: %+v", info)
+	}
+
+	stuck := []Sample{{Labels: map[string]string{"namespace": "mqttbridge", "pod": "bambu-1"}, Value: 1}}
+	e.HandleQueryResult("pod-not-running", stuck, t0.Add(time.Minute))
+	if info := ruleInfo(t, e, "pod-not-running"); info.Pending != 1 || info.OK != 52 {
+		t.Fatalf("one pending: %+v", info)
+	}
+	e.HandleQueryResult("pod-not-running", stuck, t0.Add(20*time.Minute))
+	if info := ruleInfo(t, e, "pod-not-running"); info.Firing != 1 || info.OK != 52 || info.Watching != 53 {
+		t.Fatalf("one firing: %+v", info)
+	}
+}
+
+// The failure this exists for: the metric disappears, the threshold query keeps
+// returning nothing, and everything looks perfectly healthy.
+func TestBlindRuleFiresWhenThePopulationIsGone(t *testing.T) {
+	e, got := newEngine(t, watchedRule)
+	e.HandleWatchResult("pod-not-running", 53, t0)
+
+	e.HandleWatchResult("pod-not-running", 0, t0.Add(time.Minute))
+	e.HandleWatchResult("pod-not-running", 0, t0.Add(10*time.Minute))
+	if len(*got) != 0 {
+		t.Fatalf("a short gap must not alert: %s", kinds(*got))
+	}
+
+	e.HandleWatchResult("pod-not-running", 0, t0.Add(17*time.Minute))
+	if len(*got) != 1 || (*got)[0].Alert.Rule != blindRule || (*got)[0].Alert.Title != "Rule pod-not-running sees no data" {
+		t.Fatalf("got %+v", *got)
+	}
+
+	e.HandleWatchResult("pod-not-running", 48, t0.Add(20*time.Minute))
+	last := (*got)[len(*got)-1]
+	if last.Kind != EventResolved || last.Alert.Title != "Rule pod-not-running sees data again" {
+		t.Fatalf("got %+v", last)
+	}
+}
+
+func TestBlindRuleOnlyExistsWithWatchQueries(t *testing.T) {
+	e, _ := newEngine(t, diskRule) // promql, but no watch
+	for _, r := range e.GetStatus().Rules {
+		if r.Name == blindRule {
+			t.Fatal("built-in blind rule added although no rule has a watch query")
+		}
+	}
+	if !ruleInfo(t, e, "disk-full").Blind {
+		t.Fatal("a promql rule without watch must say that its coverage is unknown")
+	}
+
+	e, _ = newEngine(t, watchedRule)
+	ruleInfo(t, e, blindRule)
+	for _, q := range e.PromQLRules() {
+		if builtinRule(q.Name) {
+			t.Fatalf("built-in rule must not be polled: %+v", q)
+		}
+	}
+}
+
+func TestOKCountForMQTTRules(t *testing.T) {
+	e, _ := newEngine(t, offlineRule)
+	e.HandleMessage("sonos/bridge/state", []byte("online"), t0)
+	e.HandleMessage("hue/bridge/state", []byte("online"), t0)
+	e.HandleMessage("rules/bridge/state", []byte("offline"), t0)
+	if info := ruleInfo(t, e, "bridge-offline"); info.Watching != 3 || info.OK != 2 || info.Pending != 1 {
+		t.Fatalf("got %+v", info)
+	}
+}
+
+func TestWatchOnlyForPromQL(t *testing.T) {
+	_, err := NewEngine(rules(t, `[{"name":"a","type":"silence","topics":["a"],"for":"1m","watch":"up"}]`), t0)
+	if err == nil {
+		t.Fatal("accepted watch on a silence rule")
+	}
+}

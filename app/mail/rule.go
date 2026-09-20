@@ -72,6 +72,10 @@ func compileRule(rc config.RuleConfig) (*Rule, error) {
 		return nil, fmt.Errorf("unknown type %q (state, count, silence, promql)", rc.Type)
 	}
 
+	if rc.Watch != "" && rc.Type != config.RulePromQL {
+		return nil, fmt.Errorf("watch is only valid for type %q", config.RulePromQL)
+	}
+
 	if rc.Group && rc.Type != config.RuleSilence {
 		return nil, fmt.Errorf("group is only valid for type %q", config.RuleSilence)
 	}

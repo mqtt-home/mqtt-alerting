@@ -74,6 +74,21 @@ type renderOptions struct {
 	Demo bool
 }
 
+// coverage says in words how much of what a rule watches is fine. It is the
+// answer to "0 firing - but is this rule looking at anything?".
+func coverage(r RuleInfo) string {
+	switch {
+	case r.Blind:
+		return "coverage unknown"
+	case r.Watching == 0:
+		return "nothing seen yet"
+	case r.Firing+r.Pending == 0:
+		return fmt.Sprintf("all %d fine", r.Watching)
+	default:
+		return fmt.Sprintf("%d of %d fine", r.OK, r.Watching)
+	}
+}
+
 func countKinds(events []Event) map[string]int {
 	counts := map[string]int{}
 	for _, ev := range events {
@@ -231,11 +246,16 @@ func composeText(events []Event, opt renderOptions) string {
 	if opt.Status != nil {
 		b.WriteString("OVERVIEW\n========\n\n")
 		for _, r := range opt.Status.Rules {
-			state := "ok"
-			if r.Firing > 0 {
+			state := "OK"
+			switch {
+			case r.Firing > 0:
 				state = fmt.Sprintf("%d FIRING", r.Firing)
+			case r.Pending > 0:
+				state = fmt.Sprintf("%d pending", r.Pending)
+			case r.Blind || r.Watching == 0:
+				state = "-"
 			}
-			fmt.Fprintf(&b, "  %-26s %4d watched   %s\n", r.Name, r.Watching, state)
+			fmt.Fprintf(&b, "  %-30s %-18s %s\n", r.Name, coverage(r), state)
 		}
 		b.WriteString("\n")
 	}
@@ -395,12 +415,14 @@ func composeHTML(events []Event, opt renderOptions) string {
 			if i > 0 {
 				border = "border-top:1px solid " + colLine + ";"
 			}
-			state := pill("OK", colGood, colGoodBg)
+			state := pill("✓ OK", colGood, colGoodBg)
 			switch {
 			case r.Firing > 0:
 				state = pill(fmt.Sprintf("%d firing", r.Firing), colBad, colBadBg)
 			case r.Pending > 0:
 				state = pill(fmt.Sprintf("%d pending", r.Pending), colWarn, colWarnBg)
+			case r.Blind:
+				state = pill("no watch query", colMuted, colPage)
 			case r.Watching == 0:
 				state = pill("nothing seen yet", colMuted, colPage)
 			}
@@ -410,10 +432,10 @@ func composeHTML(events []Event, opt renderOptions) string {
 			}
 			fmt.Fprintf(&b, `<tr><td style="%spadding:8px 12px;"><div style="font-size:14px;font-weight:600;color:%s;">%s</div>`+
 				`<div style="font-size:12px;color:%s;">%s</div></td>`+
-				`<td align="right" style="%spadding:8px 6px;font-size:12px;color:%s;white-space:nowrap;">%d watched</td>`+
+				`<td align="right" style="%spadding:8px 6px;font-size:12px;color:%s;white-space:nowrap;">%s</td>`+
 				`<td align="right" style="%spadding:8px 12px;white-space:nowrap;">%s</td></tr>`,
 				border, colInk, esc(r.Name), colMuted, esc(label),
-				border, colMuted, r.Watching,
+				border, colMuted, esc(coverage(r)),
 				border, state)
 		}
 		b.WriteString(`</table>`)

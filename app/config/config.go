@@ -90,6 +90,13 @@ type RuleConfig struct {
 	// own threshold ("... > 85"): every series it returns is one alert, its
 	// labels are available in the title as {label_name}, its sample as {value}.
 	Query string `json:"query,omitempty"`
+	// Watch is the population of a "promql" rule: the same selection as Query
+	// but without the threshold, so it returns every series the rule looks at.
+	// A query with a threshold returns nothing while all is well, which looks
+	// exactly like a rule on a metric that no longer exists. With Watch set,
+	// the overview shows how many series the rule covers, and the built-in
+	// alert "promql-rule-blind" fires when that number drops to zero.
+	Watch string `json:"watch,omitempty"`
 	// Topics are MQTT filters, wildcards allowed. Exclude uses the same syntax.
 	Topics  []string `json:"topics"`
 	Exclude []string `json:"exclude,omitempty"`

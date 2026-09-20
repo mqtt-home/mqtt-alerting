@@ -181,6 +181,7 @@
         "resolved_title": "Disk {mountpoint} has room again",
         "type": "promql",
         "query": "max by (mountpoint) (100 - node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|squashfs|ramfs|vfat\"} / node_filesystem_size_bytes * 100) > 85",
+        "watch": "max by (mountpoint) (node_filesystem_size_bytes{fstype!~\"tmpfs|overlay|squashfs|ramfs|vfat\"})",
         "for": "15m",
         "repeat": "24h"
       },
@@ -191,6 +192,7 @@
         "resolved_title": "Disk {mountpoint} stopped filling up",
         "type": "promql",
         "query": "max by (mountpoint) (predict_linear(node_filesystem_avail_bytes{mountpoint=\"/\"}[6h], 4*86400)) < 0",
+        "watch": "max by (mountpoint) (node_filesystem_avail_bytes{mountpoint=\"/\"})",
         "for": "1h",
         "repeat": "24h"
       },
@@ -201,6 +203,7 @@
         "resolved_title": "Server memory is fine again",
         "type": "promql",
         "query": "max((1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100) > 90",
+        "watch": "max(node_memory_MemTotal_bytes)",
         "for": "15m",
         "repeat": "24h"
       },
@@ -211,6 +214,7 @@
         "resolved_title": "CPU temperature is fine again",
         "type": "promql",
         "query": "max(node_thermal_zone_temp{type=\"cpu-thermal\"}) > 78",
+        "watch": "max(node_thermal_zone_temp{type=\"cpu-thermal\"})",
         "for": "10m",
         "repeat": "24h"
       },
@@ -221,6 +225,7 @@
         "resolved_title": "Load is back to normal",
         "type": "promql",
         "query": "max(node_load15) / scalar(count(node_cpu_seconds_total{mode=\"idle\"})) > 2",
+        "watch": "max(node_load15)",
         "for": "30m",
         "repeat": "24h"
       },
@@ -231,6 +236,7 @@
         "resolved_title": "{namespace}/{pod} stopped restarting",
         "type": "promql",
         "query": "max by (namespace, pod) (round(increase(kube_pod_container_status_restarts_total[1h]))) > 3",
+        "watch": "max by (namespace, pod) (kube_pod_container_status_restarts_total)",
         "repeat": "24h"
       },
       {
@@ -240,6 +246,7 @@
         "resolved_title": "{namespace}/{pod}: no further OOM kills",
         "type": "promql",
         "query": "max by (namespace, pod) (kube_pod_container_status_last_terminated_reason{reason=\"OOMKilled\"} == 1 and on(namespace, pod, container) increase(kube_pod_container_status_restarts_total[1h]) > 0)",
+        "watch": "max by (namespace, pod) (kube_pod_container_status_restarts_total)",
         "repeat": "24h"
       },
       {
@@ -249,6 +256,7 @@
         "resolved_title": "{namespace}/{pod} is running",
         "type": "promql",
         "query": "max by (namespace, pod, phase) (kube_pod_status_phase{phase=~\"Pending|Unknown\"}) == 1",
+        "watch": "max by (namespace, pod) (kube_pod_status_phase)",
         "for": "15m",
         "repeat": "24h"
       },
@@ -259,6 +267,7 @@
         "resolved_title": "{namespace}/{deployment} is available again",
         "type": "promql",
         "query": "max by (namespace, deployment) (kube_deployment_status_replicas_unavailable) > 0",
+        "watch": "max by (namespace, deployment) (kube_deployment_status_replicas_unavailable)",
         "for": "15m",
         "repeat": "24h"
       },
@@ -269,6 +278,7 @@
         "resolved_title": "Job {namespace}/{job_name} is gone or succeeded",
         "type": "promql",
         "query": "max by (namespace, job_name) (kube_job_status_failed) > 0",
+        "watch": "max by (namespace, job_name) (kube_job_status_failed)",
         "for": "5m",
         "repeat": "168h"
       },
@@ -279,6 +289,7 @@
         "resolved_title": "Certificate {name} was renewed",
         "type": "promql",
         "query": "min by (namespace, name) ((certmanager_certificate_expiration_timestamp_seconds - time()) / 86400) < 14",
+        "watch": "min by (namespace, name) (certmanager_certificate_expiration_timestamp_seconds)",
         "for": "1h",
         "repeat": "24h"
       },
@@ -289,6 +300,7 @@
         "resolved_title": "Metrics target {job} ({instance}) is back",
         "type": "promql",
         "query": "max by (job, instance) (up) == 0",
+        "watch": "max by (job, instance) (up)",
         "for": "15m",
         "repeat": "24h"
       }

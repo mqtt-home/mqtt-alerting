@@ -409,9 +409,10 @@ func TestCountIgnoresDuplicateDeliveries(t *testing.T) {
 func sampleStatus() *Status {
 	return &Status{
 		Rules: []RuleInfo{
-			{Name: "bridge-offline", Description: "a bridge reports offline", Watching: 19, Firing: 2},
-			{Name: "battery-low", Summary: "battery < 15 for 1h", Watching: 24},
-			{Name: "data-silent", Description: "a service stopped publishing", Watching: 12, Pending: 1},
+			{Name: "bridge-offline", Description: "a bridge reports offline", Watching: 19, Firing: 2, OK: 17},
+			{Name: "battery-low", Summary: "battery < 15 for 1h", Watching: 24, OK: 24},
+			{Name: "data-silent", Description: "a service stopped publishing", Watching: 12, Pending: 1, OK: 11},
+			{Name: "node-disk-full", Type: "promql", Summary: "disk > 85", Blind: true},
 		},
 		Alerts: []Alert{
 			{Rule: "bridge-offline", Title: "haus/shelly is offline", Topic: "haus/shelly/bridge/state", State: StateFiring, Since: t0},
@@ -449,8 +450,18 @@ func TestComposeSaysWhatIsWrongAndWhatWorks(t *testing.T) {
 	if strings.Count(mail.Text, "haus/shelly is offline") != 0 {
 		t.Error("alert repeated under other open problems")
 	}
-	if !strings.Contains(mail.HTML, ">OK<") || !strings.Contains(mail.HTML, "2 firing") {
-		t.Error("overview pills missing")
+	for _, want := range []string{"✓ OK", "2 firing", "1 pending", "no watch query"} {
+		if !strings.Contains(mail.HTML, want) {
+			t.Errorf("overview pill %q missing", want)
+		}
+	}
+	// Each rule says how much of what it watches is fine, in both parts.
+	for _, body := range []string{mail.Text, mail.HTML} {
+		for _, want := range []string{"17 of 19 fine", "all 24 fine", "11 of 12 fine", "coverage unknown"} {
+			if !strings.Contains(body, want) {
+				t.Errorf("coverage %q missing", want)
+			}
+		}
 	}
 }
 

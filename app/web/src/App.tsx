@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { Sun, Moon, Wifi, WifiOff, Mail, BellRing, CheckCircle2, Clock, AlertTriangle } from 'lucide-react';
+import { Sun, Moon, Wifi, WifiOff, Mail, BellRing, CheckCircle2, CircleHelp, Clock, AlertTriangle } from 'lucide-react';
 import { useSSE } from '@/hooks/useSSE';
 import { useTheme } from '@/contexts/ThemeContext';
 import { sendCommand } from '@/lib/api';
@@ -53,15 +53,34 @@ function AlertRow({ alert }: { alert: Alert }) {
   );
 }
 
+// How much of what a rule watches is fine - the answer to "0 firing, but is
+// this rule looking at anything?".
+function coverage(rule: RuleInfo): string {
+  if (rule.blind) return 'coverage unknown';
+  if (rule.watching === 0) return 'nothing seen yet';
+  if (rule.firing + rule.pending === 0) return `all ${rule.watching} fine`;
+  return `${rule.ok} of ${rule.watching} fine`;
+}
+
 function RuleRow({ rule }: { rule: RuleInfo }) {
+  const fine = !rule.blind && rule.watching > 0 && rule.firing + rule.pending === 0;
   return (
     <div className="rounded-lg border bg-card p-3 text-card-foreground">
       <div className="flex items-baseline justify-between gap-3">
-        <div className="font-medium">{rule.name}</div>
+        <div className="flex items-center gap-2 font-medium">
+          {fine
+            ? <CheckCircle2 className="h-4 w-4 shrink-0 text-green-500" />
+            : rule.firing > 0
+              ? <BellRing className="h-4 w-4 shrink-0 text-red-500" />
+              : rule.pending > 0
+                ? <Clock className="h-4 w-4 shrink-0 text-amber-500" />
+                : <CircleHelp className="h-4 w-4 shrink-0 text-muted-foreground" />}
+          {rule.name}
+        </div>
         <div className="shrink-0 text-xs text-muted-foreground">
           {rule.firing > 0 && <span className="mr-2 font-medium text-red-500">{rule.firing} firing</span>}
           {rule.pending > 0 && <span className="mr-2 font-medium text-amber-500">{rule.pending} pending</span>}
-          {rule.watching} watched · {rule.type}
+          <span className={fine ? 'text-green-500' : ''}>{coverage(rule)}</span> · {rule.type}
         </div>
       </div>
       {rule.description && <div className="text-sm text-muted-foreground">{rule.description}</div>}

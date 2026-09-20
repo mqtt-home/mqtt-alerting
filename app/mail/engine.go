@@ -59,6 +59,11 @@ type RuleInfo struct {
 	Watching int    `json:"watching"`
 	Firing   int    `json:"firing"`
 	Pending  int    `json:"pending"`
+	// OK is how many of the watched things are fine: watching - firing - pending.
+	OK int `json:"ok"`
+	// Blind marks a promql rule that cannot say what it covers: it has no
+	// `watch` query, so "nothing firing" is all that is known about it.
+	Blind bool `json:"blind,omitempty"`
 }
 
 type MailStats struct {
@@ -131,6 +136,9 @@ type Engine struct {
 	lastTick    time.Time
 	lastMessage time.Time
 
+	// promql: how many series each rule's watch query returned last time
+	watched map[string]int
+
 	onEvent   func(Event)
 	listeners []StatusListener
 	mailStats func() MailStats
@@ -138,7 +146,7 @@ type Engine struct {
 }
 
 func NewEngine(cfgs []config.RuleConfig, now time.Time) (*Engine, error) {
-	rules, err := compileRules(withUnreachableRule(cfgs))
+	rules, err := compileRules(withBuiltinRules(cfgs))
 	if err != nil {
 		return nil, err
 	}
@@ -146,6 +154,7 @@ func NewEngine(cfgs []config.RuleConfig, now time.Time) (*Engine, error) {
 	e := &Engine{
 		rules:     rules,
 		instances: map[string]*instance{},
+		watched:   map[string]int{},
 		startedAt: now,
 	}
 
@@ -490,7 +499,7 @@ func (e *Engine) GetStatus() Status {
 		}
 	}
 	for _, r := range e.rules {
-		status.Rules = append(status.Rules, RuleInfo{
+		info := RuleInfo{
 			Name:        r.Name(),
 			Description: r.cfg.Description,
 			Type:        r.cfg.Type,
@@ -502,7 +511,20 @@ func (e *Engine) GetStatus() Status {
 			Watching: watching[r.Name()],
 			Firing:   firing[r.Name()],
 			Pending:  pendingCount[r.Name()],
-		})
+		}
+		if r.cfg.Type == config.RulePromQL && !builtinRule(r.Name()) {
+			// The instances of a promql rule are only the series over the
+			// threshold. What it covers is what its watch query returns.
+			if n, known := e.watched[r.Name()]; known {
+				info.Watching = n
+			} else {
+				info.Blind = true
+			}
+		}
+		if info.OK = info.Watching - info.Firing - info.Pending; info.OK < 0 {
+			info.OK = 0
+		}
+		status.Rules = append(status.Rules, info)
 	}
 	e.mu.Unlock()
 

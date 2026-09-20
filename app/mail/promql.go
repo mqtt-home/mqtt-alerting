@@ -19,6 +19,8 @@ type Sample struct {
 type PromQLRule struct {
 	Name  string
 	Query string
+	// Watch returns the population of the rule; empty if not configured.
+	Watch string
 }
 
 // unreachableRule is the name of the built-in alert for a Prometheus that does
@@ -27,6 +29,13 @@ type PromQLRule struct {
 const unreachableRule = "prometheus-unreachable"
 
 const unreachableTopic = "prometheus"
+
+// blindRule is the built-in alert for a rule whose watch query returns nothing.
+// A threshold query is silent when all is well and equally silent when its
+// metric is gone - exporter down, metric renamed, dropped at scrape time.
+const blindRule = "promql-rule-blind"
+
+func builtinRule(name string) bool { return name == unreachableRule || name == blindRule }
 
 // plumbingLabels say how a sample got into Prometheus, not what it is about.
 // They are left out of the alert identity, so an alert survives a restarted
@@ -40,8 +49,8 @@ var plumbingLabels = map[string]bool{
 func (e *Engine) PromQLRules() []PromQLRule {
 	var out []PromQLRule
 	for _, r := range e.rules {
-		if r.cfg.Type == config.RulePromQL && r.Name() != unreachableRule {
-			out = append(out, PromQLRule{Name: r.Name(), Query: r.cfg.Query})
+		if r.cfg.Type == config.RulePromQL && !builtinRule(r.Name()) {
+			out = append(out, PromQLRule{Name: r.Name(), Query: r.cfg.Query, Watch: r.cfg.Watch})
 		}
 	}
 	return out
@@ -145,6 +154,36 @@ func (e *Engine) HandleQueryResult(ruleName string, samples []Sample, now time.T
 	e.emit(events)
 }
 
+// HandleWatchResult takes the size of a rule's population. Zero means the rule
+// is blind: whatever it is supposed to catch, it cannot see it any more.
+func (e *Engine) HandleWatchResult(ruleName string, series int, now time.Time) {
+	r := e.rule(ruleName)
+	blind := e.rule(blindRule)
+	if r == nil || blind == nil {
+		return
+	}
+
+	var events []Event
+	e.mu.Lock()
+	e.watched[ruleName] = series
+	inst := e.instanceFor(blind, ruleName, ruleName)
+	if series > 0 {
+		inst.matchSince = time.Time{}
+		if inst.firing {
+			events = append(events, e.resolve(inst, now))
+		}
+	} else {
+		inst.value = "watch query returns no series"
+		if inst.matchSince.IsZero() {
+			inst.matchSince = now
+		}
+	}
+	e.mu.Unlock()
+
+	events = append(events, e.evaluate(now)...)
+	e.emit(events)
+}
+
 // HandleQueryError records that Prometheus did not answer. It deliberately
 // leaves every existing alert alone: not knowing is not the same as being fine,
 // and resolving "disk full" because the monitoring died would be the worst
@@ -180,28 +219,44 @@ func (e *Engine) setUnreachable(reason string, now time.Time) {
 	e.emit(events)
 }
 
-// withUnreachableRule appends the built-in alert when there are promql rules.
-func withUnreachableRule(cfgs []config.RuleConfig) []config.RuleConfig {
-	has := false
+// withBuiltinRules appends the built-in alerts that promql rules need.
+func withBuiltinRules(cfgs []config.RuleConfig) []config.RuleConfig {
+	hasPromQL, hasWatch := false, false
+	configured := map[string]bool{}
 	for _, c := range cfgs {
 		if c.Type == config.RulePromQL {
-			has = true
+			hasPromQL = true
+			if c.Watch != "" {
+				hasWatch = true
+			}
 		}
-		if c.Name == unreachableRule {
-			return cfgs // configured by hand, e.g. with a different `for`
-		}
+		configured[c.Name] = true // a built-in can be configured by hand, e.g. with a different `for`
 	}
-	if !has {
-		return cfgs
+
+	out := append([]config.RuleConfig{}, cfgs...)
+	if hasPromQL && !configured[unreachableRule] {
+		out = append(out, config.RuleConfig{
+			Name:          unreachableRule,
+			Description:   "the promql rules cannot be evaluated; existing alerts stay as they are",
+			Title:         "Prometheus does not answer",
+			ResolvedTitle: "Prometheus answers again",
+			Type:          config.RulePromQL,
+			Query:         "(built in)",
+			For:           config.Duration(10 * time.Minute),
+			Repeat:        config.Duration(24 * time.Hour),
+		})
 	}
-	return append(append([]config.RuleConfig{}, cfgs...), config.RuleConfig{
-		Name:          unreachableRule,
-		Description:   "the promql rules cannot be evaluated; existing alerts stay as they are",
-		Title:         "Prometheus does not answer",
-		ResolvedTitle: "Prometheus answers again",
-		Type:          config.RulePromQL,
-		Query:         "(built in)",
-		For:           config.Duration(10 * time.Minute),
-		Repeat:        config.Duration(24 * time.Hour),
-	})
+	if hasWatch && !configured[blindRule] {
+		out = append(out, config.RuleConfig{
+			Name:          blindRule,
+			Description:   "the metric a rule depends on is gone (exporter down, metric renamed or dropped), so the rule can never fire",
+			Title:         "Rule {device} sees no data",
+			ResolvedTitle: "Rule {device} sees data again",
+			Type:          config.RulePromQL,
+			Query:         "(built in)",
+			For:           config.Duration(15 * time.Minute),
+			Repeat:        config.Duration(24 * time.Hour),
+		})
+	}
+	return out
 }

@@ -30,6 +30,8 @@ export interface RuleInfo {
   watching: number;
   firing: number;
   pending: number;
+  ok: number;
+  blind?: boolean;
 }
 
 export interface MailStats {
