@@ -39,7 +39,7 @@ func compileRule(rc config.RuleConfig) (*Rule, error) {
 	if rc.Name == "" {
 		return nil, fmt.Errorf("name is required")
 	}
-	if len(rc.Topics) == 0 {
+	if len(rc.Topics) == 0 && rc.Type != config.RulePromQL {
 		return nil, fmt.Errorf("at least one topic is required")
 	}
 
@@ -61,8 +61,15 @@ func compileRule(rc config.RuleConfig) (*Rule, error) {
 		if rc.For <= 0 {
 			return nil, fmt.Errorf("type %q needs for > 0", rc.Type)
 		}
+	case config.RulePromQL:
+		if strings.TrimSpace(rc.Query) == "" {
+			return nil, fmt.Errorf("type %q needs a query", rc.Type)
+		}
+		if len(rc.Topics) > 0 || rc.Condition != nil {
+			return nil, fmt.Errorf("type %q takes a query, not topics or a condition", rc.Type)
+		}
 	default:
-		return nil, fmt.Errorf("unknown type %q (state, count, silence)", rc.Type)
+		return nil, fmt.Errorf("unknown type %q (state, count, silence, promql)", rc.Type)
 	}
 
 	if rc.Group && rc.Type != config.RuleSilence {
@@ -142,30 +149,36 @@ func groupName(filter string) string {
 
 // resolvedTitle is the headline of the recovery. Reusing the alert title there
 // reads as the opposite of what happened ("Working again: x is offline").
-func (r *Rule) resolvedTitle(device, topic, value string) string {
+func (r *Rule) resolvedTitle(device, topic, value string, labels map[string]string) string {
 	tpl := r.cfg.ResolvedTitle
 	if tpl == "" {
 		tpl = "{device}: back to normal"
 	}
-	return r.render(tpl, device, topic, value)
+	return r.render(tpl, device, topic, value, labels)
 }
 
 // title renders the rule's title template for one alert.
-func (r *Rule) title(device, topic, value string) string {
+func (r *Rule) title(device, topic, value string, labels map[string]string) string {
 	tpl := r.cfg.Title
 	if tpl == "" {
 		tpl = "{device}"
 	}
-	return r.render(tpl, device, topic, value)
+	return r.render(tpl, device, topic, value, labels)
 }
 
-func (r *Rule) render(tpl, device, topic, value string) string {
-	return strings.NewReplacer(
+// render fills a title template. labels are the series labels of a promql
+// alert ({mountpoint}, {namespace}, ...); the built-in placeholders win.
+func (r *Rule) render(tpl, device, topic, value string, labels map[string]string) string {
+	pairs := []string{
 		"{device}", device,
 		"{topic}", topic,
 		"{value}", value,
 		"{rule}", r.cfg.Name,
-	).Replace(tpl)
+	}
+	for k, v := range labels {
+		pairs = append(pairs, "{"+k+"}", v)
+	}
+	return strings.NewReplacer(pairs...).Replace(tpl)
 }
 
 // matches evaluates the condition and returns the value it looked at, which
@@ -341,6 +354,12 @@ func (r *Rule) summary() string {
 		return fmt.Sprintf("%s, %d times within %s", cond, r.cfg.Count, humanDuration(r.cfg.Within.Std()))
 	case config.RuleSilence:
 		return "no message for " + humanDuration(r.cfg.For.Std())
+	case config.RulePromQL:
+		query := strings.Join(strings.Fields(r.cfg.Query), " ")
+		if r.cfg.For > 0 {
+			return query + " for " + humanDuration(r.cfg.For.Std())
+		}
+		return query
 	}
 	return cond
 }

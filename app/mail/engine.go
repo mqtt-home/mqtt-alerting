@@ -92,6 +92,8 @@ type instance struct {
 	// topic is the concrete topic, or for a group rule the filter it stands for.
 	topic  string
 	device string
+	// promql: the labels of the series this instance stands for
+	labels map[string]string
 
 	// count: last matching payload, to recognise a duplicate delivery
 	lastHit   string
@@ -134,7 +136,7 @@ type Engine struct {
 }
 
 func NewEngine(cfgs []config.RuleConfig, now time.Time) (*Engine, error) {
-	rules, err := compileRules(cfgs)
+	rules, err := compileRules(withUnreachableRule(cfgs))
 	if err != nil {
 		return nil, err
 	}
@@ -149,6 +151,10 @@ func NewEngine(cfgs []config.RuleConfig, now time.Time) (*Engine, error) {
 	// says a word, so its clock starts now. Wildcard filters can only be
 	// tracked once a topic has shown up.
 	for _, r := range rules {
+		if r.Name() == unreachableRule {
+			// Seeded so the overview shows it as watched from the first minute.
+			e.instanceFor(r, unreachableTopic, "Prometheus")
+		}
 		if r.cfg.Type != config.RuleSilence {
 			continue
 		}
@@ -321,7 +327,7 @@ func (e *Engine) evaluate(now time.Time) []Event {
 		shouldFire := false
 
 		switch r.cfg.Type {
-		case config.RuleState:
+		case config.RuleState, config.RulePromQL:
 			shouldFire = !inst.matchSince.IsZero() && now.Sub(inst.matchSince) >= r.cfg.For.Std()
 
 		case config.RuleSilence:
@@ -376,7 +382,7 @@ func (e *Engine) resolve(inst *instance, now time.Time) Event {
 		Kind: EventResolved, At: now, Alert: e.alertOf(inst),
 		Duration: humanDuration(now.Sub(inst.firedAt)),
 	}
-	ev.Alert.Title = inst.rule.resolvedTitle(inst.device, inst.topic, inst.value)
+	ev.Alert.Title = inst.rule.resolvedTitle(inst.device, inst.topic, inst.value, inst.labels)
 	if inst.rule.cfg.Type != config.RuleState {
 		// For a state rule the value is what the topic says *now* and worth
 		// showing. "no message for 47m" on a recovery is just confusing.
@@ -400,7 +406,7 @@ func (e *Engine) record(ev Event) Event {
 func (e *Engine) alertOf(inst *instance) Alert {
 	a := Alert{
 		Rule:        inst.rule.Name(),
-		Title:       inst.rule.title(inst.device, inst.topic, inst.value),
+		Title:       inst.rule.title(inst.device, inst.topic, inst.value, inst.labels),
 		Description: inst.rule.cfg.Description,
 		Check:       inst.rule.summary(),
 		Type:        inst.rule.cfg.Type,
@@ -471,7 +477,7 @@ func (e *Engine) GetStatus() Status {
 	pendingCount := map[string]int{}
 	for _, inst := range e.instances {
 		watching[inst.rule.Name()]++
-		pending := !inst.matchSince.IsZero() && inst.rule.cfg.Type == config.RuleState
+		pending := !inst.matchSince.IsZero() && (inst.rule.cfg.Type == config.RuleState || inst.rule.cfg.Type == config.RulePromQL)
 		if inst.firing {
 			firing[inst.rule.Name()]++
 		} else if pending {

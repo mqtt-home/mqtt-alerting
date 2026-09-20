@@ -15,6 +15,7 @@ single wildcard rule covers every service that follows the same convention.
 | `state` | the condition holds continuously for `for` | `condition`, `for` (optional) |
 | `count` | the condition matched `count` times within `within`; resolves after a quiet window | `condition`, `count`, `within` |
 | `silence` | no message arrived for `for` | `for` |
+| `promql` | a Prometheus query returns series for `for` — one alert per series | `query`, `for` (optional) |
 | `silence` + `"group": true` | nothing at all arrived under a filter (`wolf-cwl/#`) — one alert per filter instead of one per topic | `for` |
 
 ```json
@@ -48,6 +49,41 @@ single wildcard rule covers every service that follows the same convention.
 A `silence` rule on a concrete topic starts its clock at startup, so a topic
 that never says anything is caught too. With a wildcard filter a topic is
 tracked from its first message on.
+
+### Prometheus rules
+
+Not everything worth an alert is on MQTT: disk, memory and temperature of the
+server, crash-looping pods, failed jobs, expiring certificates. Prometheus
+already collects those, keeps their history, and would alert on them — into a
+receiver nobody reads. A `promql` rule puts them into the same mails instead.
+
+```json
+"prometheus": { "url": "http://prometheus.example:9090", "interval": "1m" },
+
+{
+  "name": "node-disk-full",
+  "type": "promql",
+  "query": "max by (mountpoint) (100 - node_filesystem_avail_bytes / node_filesystem_size_bytes * 100) > 85",
+  "title": "Disk {mountpoint} is {value} % full",
+  "resolved_title": "Disk {mountpoint} has room again",
+  "for": "15m",
+  "repeat": "24h"
+}
+```
+
+- The query carries its own threshold. Every series it returns is one alert; a
+  series that is no longer returned resolves it.
+- Titles can use every label of the series (`{mountpoint}`, `{namespace}`,
+  `{pod}`) and `{value}`, the sample rounded to one decimal.
+- An alert is identified by its labels, without the ones that only say how the
+  sample was collected (`job`, `instance`, `endpoint`, `service`, `container`).
+  Labels added by a ServiceMonitor, like the *exporter's* `pod`, are not
+  recognisable as such: aggregate them away (`max by (mountpoint) (...)`), or a
+  restarted exporter resolves the alert and raises it again.
+- **A Prometheus that does not answer never resolves anything.** Not knowing is
+  not the same as being fine. After 10 minutes without an answer the built-in
+  alert `prometheus-unreachable` fires instead; it is added automatically as
+  soon as there is a `promql` rule, and shows the error it got.
 
 Rules that do not compile stop the service at startup rather than silently
 watching nothing. Check a config before rolling it out:

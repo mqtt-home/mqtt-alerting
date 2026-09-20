@@ -13,10 +13,11 @@ import (
 var cfg Config
 
 type Config struct {
-	MQTT     config.MQTTConfig `json:"mqtt"`
-	Mail     MailConfig        `json:"mail"`
-	Web      WebConfig         `json:"web"`
-	LogLevel string            `json:"loglevel,omitempty"`
+	MQTT       config.MQTTConfig `json:"mqtt"`
+	Prometheus PrometheusConfig  `json:"prometheus,omitempty"`
+	Mail       MailConfig        `json:"mail"`
+	Web        WebConfig         `json:"web"`
+	LogLevel   string            `json:"loglevel,omitempty"`
 }
 
 // MailConfig holds the SMTP account and the alert rules.
@@ -38,6 +39,16 @@ type MailConfig struct {
 	Rules           []RuleConfig `json:"rules"`
 }
 
+// PrometheusConfig is where rules of type "promql" send their queries.
+type PrometheusConfig struct {
+	// URL of the Prometheus (or compatible) server, without /api/v1.
+	URL string `json:"url,omitempty"`
+	// Interval between evaluations. Defaults to 1m.
+	Interval Duration `json:"interval,omitempty"`
+	// Timeout of a single query. Defaults to 10s.
+	Timeout Duration `json:"timeout,omitempty"`
+}
+
 type SMTPConfig struct {
 	Enabled  bool   `json:"enabled"`
 	Host     string `json:"host"`
@@ -54,6 +65,7 @@ const (
 	RuleState   = "state"
 	RuleCount   = "count"
 	RuleSilence = "silence"
+	RulePromQL  = "promql"
 )
 
 // RuleConfig is one monitoring rule. A rule is evaluated separately for every
@@ -71,8 +83,13 @@ type RuleConfig struct {
 	// online"). Same placeholders. Defaults to "{device}: back to normal".
 	ResolvedTitle string `json:"resolved_title,omitempty"`
 	// Type is "state" (condition holds for `for`), "count" (condition matched
-	// `count` times within `within`) or "silence" (no message for `for`).
+	// `count` times within `within`), "silence" (no message for `for`) or
+	// "promql" (a Prometheus query returns series for `for`).
 	Type string `json:"type"`
+	// Query is the PromQL expression of a "promql" rule. It has to contain its
+	// own threshold ("... > 85"): every series it returns is one alert, its
+	// labels are available in the title as {label_name}, its sample as {value}.
+	Query string `json:"query,omitempty"`
 	// Topics are MQTT filters, wildcards allowed. Exclude uses the same syntax.
 	Topics  []string `json:"topics"`
 	Exclude []string `json:"exclude,omitempty"`
@@ -171,6 +188,12 @@ func LoadConfig(file string) (Config, error) {
 	}
 	if cfg.Web.Port == 0 {
 		cfg.Web.Port = 8080
+	}
+	if cfg.Prometheus.Interval == 0 {
+		cfg.Prometheus.Interval = Duration(time.Minute)
+	}
+	if cfg.Prometheus.Timeout == 0 {
+		cfg.Prometheus.Timeout = Duration(10 * time.Second)
 	}
 
 	return cfg, nil

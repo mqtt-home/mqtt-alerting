@@ -194,7 +194,11 @@ func composeText(events []Event, opt renderOptions) string {
 			if a.Description != "" {
 				fmt.Fprintf(&b, "  what:   %s\n", a.Description)
 			}
-			fmt.Fprintf(&b, "  topic:  %s\n", a.Topic)
+			if a.Type == "promql" {
+				fmt.Fprintf(&b, "  series: %s\n", a.Topic)
+			} else {
+				fmt.Fprintf(&b, "  topic:  %s\n", a.Topic)
+			}
 			if a.Value != "" && ev.Kind == EventResolved {
 				fmt.Fprintf(&b, "  now:    %s\n", a.Value)
 			} else if a.Value != "" {
@@ -274,7 +278,11 @@ func eventCard(ev Event) string {
 
 	var rows strings.Builder
 	rows.WriteString(detailRow("What", a.Description, false))
-	rows.WriteString(detailRow("Topic", a.Topic, true))
+	sourceLabel := "Topic"
+	if a.Type == "promql" {
+		sourceLabel = "Series"
+	}
+	rows.WriteString(detailRow(sourceLabel, a.Topic, true))
 	valueLabel := "Value"
 	if ev.Kind == EventResolved {
 		valueLabel = "Now"

@@ -5,7 +5,7 @@ export interface Alert {
   title: string;
   check?: string;
   description?: string;
-  type: 'state' | 'count' | 'silence';
+  type: 'state' | 'count' | 'silence' | 'promql';
   topic: string;
   state: 'pending' | 'firing';
   value?: string;
@@ -23,7 +23,7 @@ export interface AlertEvent {
 export interface RuleInfo {
   name: string;
   description?: string;
-  type: 'state' | 'count' | 'silence';
+  type: 'state' | 'count' | 'silence' | 'promql';
   topics: string[];
   summary: string;
   watching: number;

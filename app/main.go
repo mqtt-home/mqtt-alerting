@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	_ "net/http/pprof"
@@ -240,6 +241,16 @@ func main() {
 	go engine.Run(5*time.Second, stop)
 	go mailer.Run(5*time.Second, stop)
 
+	if queries := engine.PromQLRules(); len(queries) > 0 {
+		if cfg.Prometheus.URL == "" {
+			// Rules that can never be evaluated would look like a healthy node.
+			logger.Error("Rules of type promql need prometheus.url", "rules", len(queries))
+			os.Exit(1)
+		}
+		logger.Info("Evaluating promql rules", "rules", len(queries), "url", cfg.Prometheus.URL, "interval", cfg.Prometheus.Interval.Std().String())
+		go runPrometheusPoller(cfg.Prometheus, queries, stop)
+	}
+
 	if !cfg.Web.Enabled {
 		logger.Info("Web interface is disabled in the configuration")
 	} else {
@@ -266,6 +277,38 @@ func main() {
 	// Clean DISCONNECT: a planned shutdown must not fire the "offline" will.
 	mqtt.Stop()
 	logger.Info("Shutdown complete")
+}
+
+// runPrometheusPoller evaluates the promql rules. It has its own goroutine and
+// its own clock: a slow or dead Prometheus must never hold up the MQTT side.
+func runPrometheusPoller(pc config.PrometheusConfig, queries []mail.PromQLRule, stop <-chan struct{}) {
+	client := &http.Client{Timeout: pc.Timeout.Std()}
+
+	evaluate := func() {
+		for _, q := range queries {
+			ctx, cancel := context.WithTimeout(context.Background(), pc.Timeout.Std())
+			samples, err := mail.QueryPrometheus(ctx, client, pc.URL, q.Query)
+			cancel()
+			if err != nil {
+				logger.Warn("Prometheus query failed", "rule", q.Name, "error", err)
+				engine.HandleQueryError(err, time.Now())
+				continue
+			}
+			engine.HandleQueryResult(q.Name, samples, time.Now())
+		}
+	}
+
+	evaluate()
+	ticker := time.NewTicker(pc.Interval.Std())
+	defer ticker.Stop()
+	for {
+		select {
+		case <-ticker.C:
+			evaluate()
+		case <-stop:
+			return
+		}
+	}
 }
 
 func checkConfig(args []string) int {

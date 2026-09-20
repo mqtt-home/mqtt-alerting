@@ -5,6 +5,10 @@
     "qos": 2,
     "retain": true
   },
+  "prometheus": {
+    "url": "http://prometheus.example:9090",
+    "interval": "1m"
+  },
   "mail": {
     "smtp": {
       "enabled": true,
@@ -120,6 +124,36 @@
           "lt": 15
         },
         "for": "1h",
+        "repeat": "168h"
+      },
+      {
+        "name": "node-disk-full",
+        "description": "a filesystem of the server is nearly full",
+        "title": "Disk {mountpoint} is {value} % full",
+        "resolved_title": "Disk {mountpoint} has room again",
+        "type": "promql",
+        "query": "max by (mountpoint) (100 - node_filesystem_avail_bytes{fstype!~\"tmpfs|overlay|squashfs|ramfs|vfat\"} / node_filesystem_size_bytes * 100) > 85",
+        "for": "15m",
+        "repeat": "24h"
+      },
+      {
+        "name": "node-memory",
+        "description": "the server is running out of memory",
+        "title": "Server memory at {value} %",
+        "resolved_title": "Server memory is fine again",
+        "type": "promql",
+        "query": "max((1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) * 100) > 90",
+        "for": "15m",
+        "repeat": "24h"
+      },
+      {
+        "name": "job-failed",
+        "description": "a Kubernetes job failed",
+        "title": "Job {namespace}/{job_name} failed",
+        "resolved_title": "Job {namespace}/{job_name} is gone or succeeded",
+        "type": "promql",
+        "query": "kube_job_status_failed > 0",
+        "for": "5m",
         "repeat": "168h"
       }
     ]
