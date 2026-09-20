@@ -1,4 +1,4 @@
-module github.com/mqtt-home/mqtt-mail
+module github.com/mqtt-home/mqtt-alerting
 
 go 1.26.2
 

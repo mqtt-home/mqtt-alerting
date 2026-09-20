@@ -5,7 +5,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mqtt-home/mqtt-mail/config"
+	"github.com/mqtt-home/mqtt-alerting/config"
 	"github.com/philipparndt/go-logger"
 )
 

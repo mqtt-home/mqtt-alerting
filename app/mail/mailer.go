@@ -12,7 +12,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/mqtt-home/mqtt-mail/config"
+	"github.com/mqtt-home/mqtt-alerting/config"
 	"github.com/philipparndt/go-logger"
 )
 
@@ -229,13 +229,13 @@ func SendSMTP(cfg config.SMTPConfig, mail Mail) error {
 
 	host, _ := os.Hostname()
 	now := time.Now()
-	contentHeaders, body := mimeBody(mail, fmt.Sprintf("mqtt-mail-%d", now.UnixNano()))
+	contentHeaders, body := mimeBody(mail, fmt.Sprintf("mqtt-alerting-%d", now.UnixNano()))
 	headers := append([]string{
 		"From: " + cfg.From,
 		"To: " + strings.Join(to, ", "),
 		"Subject: " + mime.QEncoding.Encode("utf-8", mail.Subject),
 		"Date: " + now.Format(time.RFC1123Z),
-		fmt.Sprintf("Message-ID: <%d.mqtt-mail@%s>", now.UnixNano(), host),
+		fmt.Sprintf("Message-ID: <%d.mqtt-alerting@%s>", now.UnixNano(), host),
 		"MIME-Version: 1.0",
 		"Auto-Submitted: auto-generated",
 	}, contentHeaders...)

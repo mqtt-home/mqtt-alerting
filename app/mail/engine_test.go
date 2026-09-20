@@ -7,7 +7,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mqtt-home/mqtt-mail/config"
+	"github.com/mqtt-home/mqtt-alerting/config"
 )
 
 var t0 = time.Date(2026, 9, 19, 10, 0, 0, 0, time.UTC)

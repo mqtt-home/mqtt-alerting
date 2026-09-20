@@ -1,14 +1,14 @@
 services:
-  mqtt-mail:
+  mqtt-alerting:
     build:
       context: .
       dockerfile: Dockerfile
-    image: pharndt/mqtt-mail:latest
+    image: pharndt/mqtt-alerting:latest
     ports:
       - "8080:8080"
       - "6060:6060"
     volumes:
-      - ../production/config:/var/lib/mqtt-mail
+      - ../production/config:/var/lib/mqtt-alerting
     environment:
       TZ: Europe/Berlin
     restart: unless-stopped

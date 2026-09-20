@@ -35,4 +35,4 @@ jobs:
           platforms: linux/amd64
           push: false
           tags: |
-            pharndt/mqtt-mail:latest
+            pharndt/mqtt-alerting:latest

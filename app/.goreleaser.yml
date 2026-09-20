@@ -1,4 +1,4 @@
-project_name: mqtt-mail
+project_name: mqtt-alerting
 version: 2
 
 before:
@@ -7,9 +7,9 @@ before:
     - sh -c "cd web && npm install -g pnpm@11.5.1 && pnpm install --frozen-lockfile && pnpm run build"
 
 builds:
-  - id: mqtt-mail
+  - id: mqtt-alerting
     main: ./main.go
-    binary: mqtt-mail
+    binary: mqtt-alerting
     goos:
       - linux
     goarch:
@@ -18,11 +18,11 @@ builds:
     env:
       - CGO_ENABLED=0
     ldflags:
-      - -s -w -X github.com/mqtt-home/mqtt-mail/version.Version={{.Version}} -X github.com/mqtt-home/mqtt-mail/version.GitCommit={{.Commit}} -X github.com/mqtt-home/mqtt-mail/version.BuildTime={{.Date}}
+      - -s -w -X github.com/mqtt-home/mqtt-alerting/version.Version={{.Version}} -X github.com/mqtt-home/mqtt-alerting/version.GitCommit={{.Commit}} -X github.com/mqtt-home/mqtt-alerting/version.BuildTime={{.Date}}
 
 dockers:
   - image_templates:
-      - "pharndt/mqtt-mail:{{ .Tag }}-amd64"
+      - "pharndt/mqtt-alerting:{{ .Tag }}-amd64"
     dockerfile: Dockerfile.goreleaser
     use: buildx
     goos: linux
@@ -34,7 +34,7 @@ dockers:
     skip_push: false
 
   - image_templates:
-      - "pharndt/mqtt-mail:{{ .Tag }}-arm64"
+      - "pharndt/mqtt-alerting:{{ .Tag }}-arm64"
     dockerfile: Dockerfile.goreleaser
     use: buildx
     goos: linux
@@ -47,16 +47,16 @@ dockers:
 
 docker_manifests:
   - id: tag
-    name_template: "pharndt/mqtt-mail:{{ .Tag }}"
+    name_template: "pharndt/mqtt-alerting:{{ .Tag }}"
     image_templates:
-      - pharndt/mqtt-mail:{{ .Tag }}-amd64
-      - pharndt/mqtt-mail:{{ .Tag }}-arm64
+      - pharndt/mqtt-alerting:{{ .Tag }}-amd64
+      - pharndt/mqtt-alerting:{{ .Tag }}-arm64
 
   - id: latest
-    name_template: "pharndt/mqtt-mail:latest"
+    name_template: "pharndt/mqtt-alerting:latest"
     image_templates:
-      - pharndt/mqtt-mail:{{ .Tag }}-amd64
-      - pharndt/mqtt-mail:{{ .Tag }}-arm64
+      - pharndt/mqtt-alerting:{{ .Tag }}-amd64
+      - pharndt/mqtt-alerting:{{ .Tag }}-arm64
 
 release:
   disable: false

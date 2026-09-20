@@ -26,16 +26,16 @@ RUN go mod download
 
 COPY . .
 
-RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o mqtt-mail .
+RUN CGO_ENABLED=0 GOOS=linux go build -a -installsuffix cgo -o mqtt-alerting .
 
 # Final stage
 FROM gcr.io/distroless/static:nonroot
 
 WORKDIR /
 
-COPY --from=backend-builder /app/mqtt-mail /mqtt-mail
+COPY --from=backend-builder /app/mqtt-alerting /mqtt-alerting
 COPY --from=frontend-builder /app/web/dist /web/dist
 
 USER nonroot:nonroot
 
-ENTRYPOINT ["/mqtt-mail", "/var/lib/mqtt-mail/config.json"]
+ENTRYPOINT ["/mqtt-alerting", "/var/lib/mqtt-alerting/config.json"]

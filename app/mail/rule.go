@@ -8,7 +8,7 @@ import (
 	"strings"
 	"time"
 
-	"github.com/mqtt-home/mqtt-mail/config"
+	"github.com/mqtt-home/mqtt-alerting/config"
 )
 
 // Rule is a validated, compiled config.RuleConfig.

@@ -11,10 +11,10 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/mqtt-home/mqtt-mail/config"
-	"github.com/mqtt-home/mqtt-mail/mail"
-	"github.com/mqtt-home/mqtt-mail/version"
-	"github.com/mqtt-home/mqtt-mail/web"
+	"github.com/mqtt-home/mqtt-alerting/config"
+	"github.com/mqtt-home/mqtt-alerting/mail"
+	"github.com/mqtt-home/mqtt-alerting/version"
+	"github.com/mqtt-home/mqtt-alerting/web"
 	"github.com/philipparndt/go-logger"
 	"github.com/philipparndt/mqtt-gateway/mqtt"
 )
@@ -179,7 +179,7 @@ func runInboundWorker(stop <-chan struct{}) {
 
 func main() {
 	logger.Init("info", logger.Logger())
-	logger.Info("mqtt-mail", "version", version.Info())
+	logger.Info("mqtt-alerting", "version", version.Info())
 	initPprof()
 
 	if len(os.Args) < 2 {
@@ -187,7 +187,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	// `mqtt-mail --check config.json` validates the rules and exits, without
+	// `mqtt-alerting --check config.json` validates the rules and exits, without
 	// touching MQTT or SMTP. A rule that does not compile stops the service at
 	// startup, so check before rolling out.
 	if os.Args[1] == "--check" {
@@ -206,7 +206,7 @@ func main() {
 	logger.SetLevel(cfg.LogLevel)
 
 	// MQTT first — the status callback publishes as soon as it fires.
-	mqtt.Start(cfg.MQTT, "mail_mqtt")
+	mqtt.Start(cfg.MQTT, "alerting_mqtt")
 
 	// Seed a retained offline before connecting, so the availability topic is
 	// never absent and consumers start from a safe default.
@@ -270,7 +270,7 @@ func main() {
 
 func checkConfig(args []string) int {
 	if len(args) != 1 {
-		logger.Error("Usage: mqtt-mail --check <config.json>")
+		logger.Error("Usage: mqtt-alerting --check <config.json>")
 		return 2
 	}
 	cfg, err := config.LoadConfig(args[0])

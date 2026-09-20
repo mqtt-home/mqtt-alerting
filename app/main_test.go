@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/mqtt-home/mqtt-mail/mail"
+	"github.com/mqtt-home/mqtt-alerting/mail"
 )
 
 // publishStatus is reachable from the MQTT message path. It must return even

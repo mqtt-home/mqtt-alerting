@@ -4,21 +4,21 @@ GOFLAGS = -v
 VERSION ?= $(shell git describe --tags --always --dirty 2>/dev/null || echo "dev")
 GIT_COMMIT ?= $(shell git rev-parse HEAD 2>/dev/null || echo "unknown")
 BUILD_TIME ?= $(shell date -u '+%Y-%m-%d %H:%M:%S UTC')
-LDFLAGS = -ldflags "-s -w -X 'github.com/mqtt-home/mqtt-mail/version.Version=$(VERSION)' -X 'github.com/mqtt-home/mqtt-mail/version.GitCommit=$(GIT_COMMIT)' -X 'github.com/mqtt-home/mqtt-mail/version.BuildTime=$(BUILD_TIME)'"
+LDFLAGS = -ldflags "-s -w -X 'github.com/mqtt-home/mqtt-alerting/version.Version=$(VERSION)' -X 'github.com/mqtt-home/mqtt-alerting/version.GitCommit=$(GIT_COMMIT)' -X 'github.com/mqtt-home/mqtt-alerting/version.BuildTime=$(BUILD_TIME)'"
 
 BUILD_DIR = build
 CONFIG_DIR = $(PWD)/../production/config
 WEB_DIR = web
 
-BINARY_NAME = mqtt-mail
-DOCKER_IMAGE_NAME = pharndt/mqtt-mail:latest
+BINARY_NAME = mqtt-alerting
+DOCKER_IMAGE_NAME = pharndt/mqtt-alerting:latest
 
 # Bare `make` prints the targets rather than doing something surprising.
 .DEFAULT_GOAL := help
 
 .PHONY: help
 help: ## Show this help
-	@echo "mqtt-mail — make targets"
+	@echo "mqtt-alerting — make targets"
 	@echo
 	@grep -hE '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) \
 		| awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'

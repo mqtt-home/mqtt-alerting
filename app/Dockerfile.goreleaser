@@ -2,9 +2,9 @@ FROM gcr.io/distroless/static:nonroot
 
 WORKDIR /
 
-COPY mqtt-mail /mqtt-mail
+COPY mqtt-alerting /mqtt-alerting
 COPY web/dist /web/dist
 
 USER nonroot:nonroot
 
-ENTRYPOINT ["/mqtt-mail", "/var/lib/mqtt-mail/config.json"]
+ENTRYPOINT ["/mqtt-alerting", "/var/lib/mqtt-alerting/config.json"]

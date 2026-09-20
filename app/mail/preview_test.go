@@ -21,7 +21,7 @@ func TestPreview(t *testing.T) {
 	resolved.Alert.Title = "rules is offline"
 	resolved.Duration = "1h 53m"
 
-	opt := renderOptions{Prefix: "[smarthome]", UIURL: "https://mail.rnd7.de", Now: t0, Status: sampleStatus()}
+	opt := renderOptions{Prefix: "[smarthome]", UIURL: "https://alerting.rnd7.de", Now: t0, Status: sampleStatus()}
 	samples := map[string]Mail{
 		"alert.html": compose([]Event{fired, resolved}, opt),
 		"test.html":  compose(demoEvents(t0), renderOptions{Prefix: opt.Prefix, UIURL: opt.UIURL, Now: t0, Status: sampleStatus(), Demo: true}),

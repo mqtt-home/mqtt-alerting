@@ -239,7 +239,7 @@ func composeText(events []Event, opt renderOptions) string {
 	if opt.UIURL != "" {
 		fmt.Fprintf(&b, "Dashboard: %s\n", opt.UIURL)
 	}
-	fmt.Fprintf(&b, "-- \nmqtt-mail, %s\n", opt.Now.Local().Format(time.RFC1123))
+	fmt.Fprintf(&b, "-- \nmqtt-alerting, %s\n", opt.Now.Local().Format(time.RFC1123))
 	return b.String()
 }
 
@@ -417,7 +417,7 @@ func composeHTML(events []Event, opt renderOptions) string {
 	}
 
 	b.WriteString(`</td></tr>`)
-	fmt.Fprintf(&b, `<tr><td style="padding:12px 22px;font-size:12px;color:%s;">mqtt-mail · %s</td></tr>`,
+	fmt.Fprintf(&b, `<tr><td style="padding:12px 22px;font-size:12px;color:%s;">mqtt-alerting · %s</td></tr>`,
 		colMuted, esc(opt.Now.Local().Format(time.RFC1123)))
 	b.WriteString(`</table></td></tr></table></body></html>`)
 	return b.String()

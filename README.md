@@ -1,4 +1,4 @@
-# mqtt-mail
+# mqtt-alerting
 
 Watches MQTT topics with rules from its config and sends an email when one of
 them says something is wrong. It exists because a bridge can look perfectly
@@ -53,7 +53,7 @@ Rules that do not compile stop the service at startup rather than silently
 watching nothing. Check a config before rolling it out:
 
 ```bash
-mqtt-mail --check config.json
+mqtt-alerting --check config.json
 ```
 
 ## Mail
@@ -84,9 +84,9 @@ which is the way to try out new rules.
 
 | Topic | Direction | Payload |
 |---|---|---|
-| `home/mail/status` | published, retained | rules, current alerts, history, mail statistics |
-| `home/mail/availability` | published, retained | `online` \| `offline` |
-| `home/mail/set` | subscribed | `{"action": "test"}` sends a test mail |
+| `home/alerting/status` | published, retained | rules, current alerts, history, mail statistics |
+| `home/alerting/availability` | published, retained | `online` \| `offline` |
+| `home/alerting/set` | subscribed | `{"action": "test"}` sends a test mail |
 
 The web UI shows the same status live and has a "Send test mail" button that
 reports the SMTP error verbatim.
@@ -97,9 +97,9 @@ reports the SMTP error verbatim.
 
 ```bash
 docker run -d \
-  -v /path/to/config:/var/lib/mqtt-mail \
+  -v /path/to/config:/var/lib/mqtt-alerting \
   -p 8080:8080 \
-  pharndt/mqtt-mail:latest
+  pharndt/mqtt-alerting:latest
 ```
 
 ### From source
@@ -120,7 +120,7 @@ from the environment at startup, so secrets stay out of the config file.
 {
   "mqtt": {
     "url": "tcp://10.10.1.3:1883",
-    "topic": "home/mail",
+    "topic": "home/alerting",
     "qos": 2,
     "retain": true
   },
@@ -137,7 +137,7 @@ from the environment at startup, so secrets stay out of the config file.
 ## Release
 
 Run the **Build release** workflow (`patch` / `minor` / `major`) — it tags,
-builds multi-arch images and pushes `pharndt/mqtt-mail:vX.Y.Z` to Docker Hub.
+builds multi-arch images and pushes `pharndt/mqtt-alerting:vX.Y.Z` to Docker Hub.
 Then bump `image.tag` in
 `homeserver-gitops/cluster/charts/mqtt/mail/chart/values.yaml` and run
 `cluster/charts/mqtt/mail/install.sh`.

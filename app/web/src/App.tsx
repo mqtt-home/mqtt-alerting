@@ -150,7 +150,7 @@ export function App() {
     <div className="min-h-screen bg-background text-foreground">
       <header className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur">
         <div className="mx-auto flex max-w-3xl items-center justify-between p-4">
-          <h1 className="text-lg font-semibold">Mail Alerts</h1>
+          <h1 className="text-lg font-semibold">Alerting</h1>
           <div className="flex items-center gap-2">
             <button
               onClick={reconnect}

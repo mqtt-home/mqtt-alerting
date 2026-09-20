@@ -1,7 +1,7 @@
 {
   "mqtt": {
     "url": "tcp://10.10.1.3:1883",
-    "topic": "home/mail",
+    "topic": "home/alerting",
     "qos": 2,
     "retain": true
   },
@@ -16,7 +16,7 @@
       "to": "${MAIL_TO}"
     },
     "subject_prefix": "[smarthome]",
-    "ui_url": "https://mail.example.com",
+    "ui_url": "https://alerting.example.com",
     "batch_seconds": 60,
     "max_mails_per_hour": 6,
     "rules": [

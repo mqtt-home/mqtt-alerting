@@ -13,8 +13,8 @@ import (
 	"github.com/go-chi/chi/v5"
 	"github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
-	"github.com/mqtt-home/mqtt-mail/config"
-	"github.com/mqtt-home/mqtt-mail/mail"
+	"github.com/mqtt-home/mqtt-alerting/config"
+	"github.com/mqtt-home/mqtt-alerting/mail"
 	"github.com/philipparndt/go-logger"
 	loggerchi "github.com/philipparndt/go-logger/chi"
 )
