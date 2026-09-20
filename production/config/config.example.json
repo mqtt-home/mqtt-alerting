@@ -1,6 +1,6 @@
 {
   "mqtt": {
-    "url": "tcp://10.10.1.3:1883",
+    "url": "tcp://mqtt.example:1883",
     "topic": "home/alerting",
     "qos": 2,
     "retain": true
@@ -26,7 +26,7 @@
     "rules": [
       {
         "name": "bridge-offline",
-        "description": "a bridge lost its connection to the broker or crashed",
+        "description": "a bridge lost its connection to the broker or crashed (mqtt-gateway publishes <topic>/bridge/state)",
         "title": "{device} bridge is offline",
         "resolved_title": "{device} bridge is back online",
         "type": "state",
@@ -45,7 +45,7 @@
       },
       {
         "name": "zigbee2mqtt-offline",
-        "description": "zigbee2mqtt publishes its state as JSON",
+        "description": "zigbee2mqtt publishes its bridge state as JSON, so the plain rule above does not match it",
         "title": "zigbee2mqtt is offline",
         "resolved_title": "zigbee2mqtt is back online",
         "type": "state",
@@ -80,8 +80,24 @@
         "repeat": "24h"
       },
       {
+        "name": "shelly-unreachable",
+        "description": "a Shelly dropped off the network (Gen1 publishes shellies/<id>/online, Gen2+ <prefix>/online)",
+        "title": "Shelly {device} is unreachable",
+        "resolved_title": "Shelly {device} is reachable again",
+        "type": "state",
+        "topics": [
+          "shellies/+/online",
+          "+/online"
+        ],
+        "condition": {
+          "equals": "false"
+        },
+        "for": "15m",
+        "repeat": "24h"
+      },
+      {
         "name": "reconnect-loop",
-        "description": "looks alive but keeps reconnecting or restarting",
+        "description": "looks alive but keeps reconnecting or restarting; needs a bridge that mirrors its log to <topic>/bridge/logs",
         "title": "{device} is stuck in a reconnect loop",
         "resolved_title": "{device} stopped reconnecting",
         "type": "count",
@@ -97,7 +113,7 @@
       },
       {
         "name": "data-silent",
-        "description": "a service that normally publishes all the time went quiet",
+        "description": "a service that normally publishes all the time went quiet; list one filter per service and measure its longest normal gap first",
         "title": "{device} stopped publishing",
         "resolved_title": "{device} publishes again",
         "type": "silence",
@@ -105,7 +121,8 @@
         "topics": [
           "zigbee2mqtt/#",
           "hue/#",
-          "haus/strom"
+          "sonos/#",
+          "home/roborock/#"
         ],
         "for": "30m",
         "repeat": "24h"
@@ -127,6 +144,37 @@
         "repeat": "168h"
       },
       {
+        "name": "nuki-battery-critical",
+        "description": "a door lock is about to run out of battery (Nuki Hub)",
+        "title": "Nuki {device}: battery critical",
+        "resolved_title": "Nuki {device}: battery fine again",
+        "type": "state",
+        "topics": [
+          "nuki/+/batteryCritical"
+        ],
+        "condition": {
+          "equals": "true"
+        },
+        "for": "10m",
+        "repeat": "72h"
+      },
+      {
+        "name": "roborock-error",
+        "description": "a vacuum is stuck or needs attention (roborock-mqtt)",
+        "title": "Roborock {device} reports error {value}",
+        "resolved_title": "Roborock {device} is fine again",
+        "type": "state",
+        "topics": [
+          "home/roborock/+/status"
+        ],
+        "condition": {
+          "field": "error_code",
+          "gt": 0
+        },
+        "for": "10m",
+        "repeat": "24h"
+      },
+      {
         "name": "node-disk-full",
         "description": "a filesystem of the server is nearly full",
         "title": "Disk {mountpoint} is {value} % full",
@@ -137,8 +185,18 @@
         "repeat": "24h"
       },
       {
+        "name": "node-disk-filling",
+        "description": "at the rate of the last 6 hours the disk runs full within 4 days",
+        "title": "Disk {mountpoint} will be full within 4 days",
+        "resolved_title": "Disk {mountpoint} stopped filling up",
+        "type": "promql",
+        "query": "max by (mountpoint) (predict_linear(node_filesystem_avail_bytes{mountpoint=\"/\"}[6h], 4*86400)) < 0",
+        "for": "1h",
+        "repeat": "24h"
+      },
+      {
         "name": "node-memory",
-        "description": "the server is running out of memory",
+        "description": "the server is running out of memory; the kernel starts killing pods next",
         "title": "Server memory at {value} %",
         "resolved_title": "Server memory is fine again",
         "type": "promql",
@@ -147,14 +205,92 @@
         "repeat": "24h"
       },
       {
+        "name": "node-temperature",
+        "description": "CPU temperature; the threshold suits a Raspberry Pi, which throttles from about 80 °C",
+        "title": "CPU at {value} °C",
+        "resolved_title": "CPU temperature is fine again",
+        "type": "promql",
+        "query": "max(node_thermal_zone_temp{type=\"cpu-thermal\"}) > 78",
+        "for": "10m",
+        "repeat": "24h"
+      },
+      {
+        "name": "node-load",
+        "description": "sustained load above 2 per core",
+        "title": "Load is {value} per core",
+        "resolved_title": "Load is back to normal",
+        "type": "promql",
+        "query": "max(node_load15) / scalar(count(node_cpu_seconds_total{mode=\"idle\"})) > 2",
+        "for": "30m",
+        "repeat": "24h"
+      },
+      {
+        "name": "pod-restarting",
+        "description": "a container keeps crashing",
+        "title": "{namespace}/{pod} restarted {value} times within an hour",
+        "resolved_title": "{namespace}/{pod} stopped restarting",
+        "type": "promql",
+        "query": "max by (namespace, pod) (round(increase(kube_pod_container_status_restarts_total[1h]))) > 3",
+        "repeat": "24h"
+      },
+      {
+        "name": "pod-oom-killed",
+        "description": "a container was killed for exceeding its memory limit",
+        "title": "{namespace}/{pod} was OOM-killed",
+        "resolved_title": "{namespace}/{pod}: no further OOM kills",
+        "type": "promql",
+        "query": "max by (namespace, pod) (kube_pod_container_status_last_terminated_reason{reason=\"OOMKilled\"} == 1 and on(namespace, pod, container) increase(kube_pod_container_status_restarts_total[1h]) > 0)",
+        "repeat": "24h"
+      },
+      {
+        "name": "pod-not-running",
+        "description": "a pod cannot start (image pull, scheduling, missing volume)",
+        "title": "{namespace}/{pod} is stuck in {phase}",
+        "resolved_title": "{namespace}/{pod} is running",
+        "type": "promql",
+        "query": "max by (namespace, pod, phase) (kube_pod_status_phase{phase=~\"Pending|Unknown\"}) == 1",
+        "for": "15m",
+        "repeat": "24h"
+      },
+      {
+        "name": "deployment-unavailable",
+        "description": "a deployment has fewer ready pods than it should",
+        "title": "{namespace}/{deployment} is not fully available",
+        "resolved_title": "{namespace}/{deployment} is available again",
+        "type": "promql",
+        "query": "max by (namespace, deployment) (kube_deployment_status_replicas_unavailable) > 0",
+        "for": "15m",
+        "repeat": "24h"
+      },
+      {
         "name": "job-failed",
-        "description": "a Kubernetes job failed",
+        "description": "a Kubernetes job failed; a CronJob whose image disappeared fails like this every run, silently",
         "title": "Job {namespace}/{job_name} failed",
         "resolved_title": "Job {namespace}/{job_name} is gone or succeeded",
         "type": "promql",
-        "query": "kube_job_status_failed > 0",
+        "query": "max by (namespace, job_name) (kube_job_status_failed) > 0",
         "for": "5m",
         "repeat": "168h"
+      },
+      {
+        "name": "certificate-expiring",
+        "description": "needs cert-manager metrics; it renews 30 days ahead, so under 14 days means renewal is failing",
+        "title": "Certificate {name} expires in {value} days",
+        "resolved_title": "Certificate {name} was renewed",
+        "type": "promql",
+        "query": "min by (namespace, name) ((certmanager_certificate_expiration_timestamp_seconds - time()) / 86400) < 14",
+        "for": "1h",
+        "repeat": "24h"
+      },
+      {
+        "name": "scrape-target-down",
+        "description": "Prometheus cannot collect from a target, so the rules above are blind for it",
+        "title": "Metrics target {job} ({instance}) is down",
+        "resolved_title": "Metrics target {job} ({instance}) is back",
+        "type": "promql",
+        "query": "max by (job, instance) (up) == 0",
+        "for": "15m",
+        "repeat": "24h"
       }
     ]
   },

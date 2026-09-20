@@ -92,6 +92,42 @@ watching nothing. Check a config before rolling it out:
 mqtt-alerting --check config.json
 ```
 
+## Example rules
+
+[`production/config/config.example.json`](production/config/config.example.json)
+is a working rule set, not a sketch: it is what runs in the author's house, minus
+the rules that only name things in that house. Take what fits and delete the rest —
+a rule whose topics never show up just watches nothing, and a `promql` rule whose
+metric does not exist never returns a series.
+
+| Rule | Fires when | Needs |
+|---|---|---|
+| `bridge-offline` | payload = "offline" for 10m | bridges that publish `<topic>/bridge/state` (every mqtt-gateway based bridge) |
+| `zigbee2mqtt-offline` | state = "offline" for 10m | zigbee2mqtt |
+| `device-unavailable` | payload = "offline" for 30m | bridges that publish `<topic>/<device>/availability` |
+| `shelly-unreachable` | payload = "false" for 15m | Shelly devices with MQTT enabled |
+| `reconnect-loop` | 8 matches within 15m | a bridge that mirrors its log to `<topic>/bridge/logs`; adapt the regex to its wording |
+| `data-silent` | nothing under a filter for 30m | your own list of filters, one per service that publishes continuously |
+| `battery-low` | battery < 15 for 1h | zigbee2mqtt |
+| `nuki-battery-critical` | payload = "true" for 10m | Nuki Hub |
+| `roborock-error` | error_code > 0 for 10m | roborock-mqtt |
+| `node-disk-full` | a filesystem is over 85 % for 15m | Prometheus + node-exporter |
+| `node-disk-filling` | at the rate of the last 6h the disk is full within 4 days, for 1h | Prometheus + node-exporter |
+| `node-memory` | memory is over 90 % for 15m | Prometheus + node-exporter |
+| `node-temperature` | CPU is over 78 °C for 10m | Prometheus + node-exporter on a board with a `cpu-thermal` zone |
+| `node-load` | 15-minute load is over 2 per core for 30m | Prometheus + node-exporter |
+| `pod-restarting` | a pod restarted more than 3 times within an hour | Prometheus + kube-state-metrics |
+| `pod-oom-killed` | a container was OOM-killed within the last hour | Prometheus + kube-state-metrics |
+| `pod-not-running` | a pod is Pending or Unknown for 15m | Prometheus + kube-state-metrics |
+| `deployment-unavailable` | a deployment has unavailable replicas for 15m | Prometheus + kube-state-metrics |
+| `job-failed` | a job has failed, for 5m | Prometheus + kube-state-metrics |
+| `certificate-expiring` | a certificate has under 14 days left, for 1h | Prometheus scraping cert-manager |
+| `scrape-target-down` | a scrape target is down for 15m | Prometheus |
+
+Thresholds and durations are starting points. Before trusting a `data-silent`
+filter, measure the longest gap that service normally has and stay well above it;
+a threshold that fires on a normal night teaches everyone to ignore the mails.
+
 ## Mail
 
 Mails are HTML with a plain-text alternative (`"plain_text": true` for text
