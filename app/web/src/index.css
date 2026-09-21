@@ -1,5 +1,16 @@
 @import "tailwindcss";
 
+@layer base {
+  /* Rule checks, topics, PromQL queries and pod names are long tokens without
+     spaces. Let them wrap anywhere instead of making the page wider than a
+     phone: one regex made the whole page scroll sideways on an iPhone.
+     "anywhere" rather than "break-word": it also lowers the min-content width,
+     so flex items can shrink instead of overflowing. */
+  body {
+    overflow-wrap: anywhere;
+  }
+}
+
 @theme {
   --color-border: hsl(214.3 31.8% 91.4%);
   --color-input: hsl(214.3 31.8% 91.4%);

@@ -180,20 +180,25 @@ func runInboundWorker(stop <-chan struct{}) {
 
 func main() {
 	logger.Init("info", logger.Logger())
-	logger.Info("mqtt-alerting", "version", version.Info())
-	initPprof()
 
 	if len(os.Args) < 2 {
 		logger.Error("No configuration file specified")
 		os.Exit(1)
 	}
 
-	// `mqtt-alerting --check config.json` validates the rules and exits, without
-	// touching MQTT or SMTP. A rule that does not compile stops the service at
-	// startup, so check before rolling out.
-	if os.Args[1] == "--check" {
+	// Offline commands: no pprof listener, no MQTT, no SMTP.
+	// `--check` validates the rules; a rule that does not compile stops the
+	// service at startup, so check before rolling out. `--replay` runs recorded
+	// history through them.
+	switch os.Args[1] {
+	case "--check":
 		os.Exit(checkConfig(os.Args[2:]))
+	case "--replay":
+		os.Exit(replayCommand(os.Args[2:]))
 	}
+
+	logger.Info("mqtt-alerting", "version", version.Info())
+	initPprof()
 
 	configFile := os.Args[1]
 	logger.Info("Configuration file", "path", configFile)

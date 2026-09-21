@@ -100,11 +100,13 @@ const kindStyle: Record<AlertEvent['kind'], string> = {
 
 function HistoryRow({ event }: { event: AlertEvent }) {
   return (
-    <div className="flex items-baseline gap-3 border-b py-1.5 text-sm last:border-b-0">
+    // On a phone the title gets a line of its own; next to date, kind and rule
+    // it was squeezed into a column a few characters wide.
+    <div className="flex flex-wrap items-baseline gap-x-3 border-b py-1.5 text-sm last:border-b-0">
       <span className="w-32 shrink-0 text-xs text-muted-foreground">{time(event.at)}</span>
       <span className={`w-16 shrink-0 text-xs font-medium ${kindStyle[event.kind]}`}>{event.kind}</span>
-      <span className="min-w-0 flex-1 break-words text-xs" title={event.alert.topic}>{event.alert.title}</span>
-      <span className="shrink-0 text-xs text-muted-foreground">{event.duration ?? event.alert.rule}</span>
+      <span className="order-last min-w-0 basis-full text-xs sm:order-none sm:basis-0 sm:flex-1" title={event.alert.topic}>{event.alert.title}</span>
+      <span className="ml-auto shrink-0 text-xs text-muted-foreground">{event.duration ?? event.alert.rule}</span>
     </div>
   );
 }

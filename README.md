@@ -138,6 +138,42 @@ Thresholds and durations are starting points. Before trusting a `data-silent`
 filter, measure the longest gap that service normally has and stay well above it;
 a threshold that fires on a normal night teaches everyone to ignore the mails.
 
+## Replay: try a rule on recorded history
+
+Before a rule goes live, find out what it would have done:
+
+```bash
+mqtt-alerting --replay config.json --source https://mqtt-logger.example --from -14d --rules roborock-stuck
+```
+
+```
+Read 1074130 messages, 673979 watched by the rules, from 5 day file(s), 171.0 MB in 8.2s
+
+TIMELINE
+  Mon 09-21 08:51  ALERT     roborock-stuck  Roborock carmen-og is stuck off its dock  value charger_disconnected
+  Mon 09-21 10:38  RESOLVED  roborock-stuck  Roborock carmen-og is back on its dock ... after 1h 46m
+
+SUMMARY
+  rule            watched  alerts  reminders  longest  total firing
+  roborock-stuck        2       5          0   4h 32m  13h 20m
+```
+
+It reads the history from an [mqtt-logger](https://github.com/philipparndt/mqtt-logger)
+and runs it through the same engine the service uses, with the service's clock of
+5-second ticks. It is offline: no broker connection, no mail.
+
+- `--from` / `--to`: RFC3339, `YYYY-MM-DD`, `now` or relative (`-14d`, `-36h`).
+- `--rules a,b`: replay only these. `--summary`: skip the timeline.
+- A rule that never saw a single matching topic is named at the end — usually a
+  typo in its topics.
+- `promql` rules are skipped; they would need Prometheus history.
+- State is rebuilt from `--from` on: a device that was already offline before it
+  counts as offline from `--from`.
+- With mqtt-logger v1.6.0 or later the history comes as one file per day, which
+  takes seconds and costs the logger nothing. Older versions are read through
+  their query API: correct, but about 100 times slower. `--events-api` forces
+  that path, to cross-check the two.
+
 ## Mail
 
 Mails are HTML with a plain-text alternative (`"plain_text": true` for text
