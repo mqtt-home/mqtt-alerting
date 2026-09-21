@@ -120,6 +120,7 @@ metric does not exist never returns a series.
 | `battery-low` | battery < 15 for 1h | zigbee2mqtt |
 | `nuki-battery-critical` | payload = "true" for 10m | Nuki Hub |
 | `roborock-error` | error_code > 0 for 10m | roborock-mqtt |
+| `roborock-stuck` | state is idle, paused, error, charging_problem or charger_disconnected for 15m | roborock-mqtt; catches a vacuum that gave up without an error code |
 | `node-disk-full` | a filesystem is over 85 % for 15m | Prometheus + node-exporter |
 | `node-disk-filling` | at the rate of the last 6h the disk is full within 4 days, for 1h | Prometheus + node-exporter |
 | `node-memory` | memory is over 90 % for 15m | Prometheus + node-exporter |

@@ -162,7 +162,7 @@
         "name": "roborock-error",
         "description": "a vacuum is stuck or needs attention (roborock-mqtt)",
         "title": "Roborock {device} reports error {value}",
-        "resolved_title": "Roborock {device} is fine again",
+        "resolved_title": "Roborock {device}: error cleared",
         "type": "state",
         "topics": [
           "home/roborock/+/status"
@@ -171,8 +171,24 @@
           "field": "error_code",
           "gt": 0
         },
-        "for": "10m",
+        "for": "15m",
         "repeat": "24h"
+      },
+      {
+        "name": "roborock-stuck",
+        "description": "a vacuum is off its dock and not cleaning (stuck, gave up on the way home, paused or picked up); most of these come without an error code",
+        "title": "Roborock {device} is stuck off its dock",
+        "resolved_title": "Roborock {device} is back on its dock or working",
+        "type": "state",
+        "topics": [
+          "home/roborock/+/status"
+        ],
+        "condition": {
+          "field": "state",
+          "regex": "^(idle|paused|error|charging_problem|charger_disconnected)$"
+        },
+        "for": "15m",
+        "repeat": "12h"
       },
       {
         "name": "node-disk-full",
