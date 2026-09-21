@@ -8,7 +8,7 @@ before:
 
 builds:
   - id: mqtt-alerting
-    main: ./main.go
+    main: .
     binary: mqtt-alerting
     goos:
       - linux
