@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"net/url"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -164,22 +165,42 @@ func (h *History) window(ctx context.Context, filter string, from, to time.Time)
 	return append(left, right...), nil
 }
 
-// request asks once, and once more after RetryWait if the answer is a 5xx:
-// the logger restarting or a proxy timing out. A second failure ends the
-// replay instead of hammering a service that is struggling.
+// request asks once, and again when the logger says so: a 429 (mqtt-logger
+// >= v1.7.0 turns queries away while others run) is retried after its
+// Retry-After, a few times. A 5xx - the logger restarting, a proxy timing out -
+// is retried once after RetryWait; a second one ends the replay instead of
+// hammering a service that is struggling.
 func (h *History) request(ctx context.Context, filter string, from, to time.Time) ([]Message, bool, error) {
-	msgs, truncated, err := h.requestOnce(ctx, filter, from, to)
-	var serverErr *serverError
-	if errors.As(err, &serverErr) {
+	busy, retried := 0, false
+	for {
+		msgs, truncated, err := h.requestOnce(ctx, filter, from, to)
+		var tooMany *tooManyError
+		var serverErr *serverError
+		var wait time.Duration
+		switch {
+		case errors.As(err, &tooMany) && busy < 5:
+			busy++
+			wait = tooMany.retryAfter
+		case errors.As(err, &serverErr) && !retried:
+			retried = true
+			wait = h.RetryWait
+		default:
+			return msgs, truncated, err
+		}
 		select {
-		case <-time.After(h.RetryWait):
+		case <-time.After(wait):
 		case <-ctx.Done():
 			return nil, false, ctx.Err()
 		}
-		return h.requestOnce(ctx, filter, from, to)
 	}
-	return msgs, truncated, err
 }
+
+type tooManyError struct {
+	msg        string
+	retryAfter time.Duration
+}
+
+func (e *tooManyError) Error() string { return e.msg }
 
 type serverError struct{ msg string }
 
@@ -209,6 +230,13 @@ func (h *History) requestOnce(ctx context.Context, filter string, from, to time.
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, false, err
+	}
+	if resp.StatusCode == http.StatusTooManyRequests {
+		wait := 5 * time.Second
+		if n, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && n >= 0 {
+			wait = time.Duration(n) * time.Second
+		}
+		return nil, false, &tooManyError{fmt.Sprintf("%s: HTTP 429: %s", endpoint, strings.TrimSpace(string(body))), wait}
 	}
 	if resp.StatusCode >= 500 {
 		return nil, false, &serverError{fmt.Sprintf("%s: HTTP %d: %s", endpoint, resp.StatusCode, strings.TrimSpace(string(body)))}

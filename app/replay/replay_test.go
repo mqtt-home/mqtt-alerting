@@ -366,3 +366,27 @@ func TestDayFilesAndQueryAPIAgree(t *testing.T) {
 		t.Fatalf("day files:\n%s\nquery API:\n%s", strings.Join(a, "\n"), strings.Join(b, "\n"))
 	}
 }
+
+// mqtt-logger >= v1.7.0 answers 429 while other queries run: wait and ask again.
+func TestFetchWaitsOutTooManyRequests(t *testing.T) {
+	fake := &fakeLogger{events: []Message{msg(0, "a/b", "x")}}
+	busy := atomic.Int32{}
+	busy.Store(2)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if busy.Load() > 0 {
+			busy.Add(-1)
+			w.Header().Set("Retry-After", "0")
+			w.WriteHeader(http.StatusTooManyRequests)
+			w.Write([]byte(`{"error":"too many queries at once"}`))
+			return
+		}
+		fake.ServeHTTP(w, r)
+	}))
+	defer srv.Close()
+
+	h := &History{BaseURL: srv.URL, Client: srv.Client()}
+	got, err := h.Fetch(context.Background(), []string{"a/#"}, t0, t0.Add(time.Hour))
+	if err != nil || len(got) != 1 {
+		t.Fatalf("got %d, err %v", len(got), err)
+	}
+}
