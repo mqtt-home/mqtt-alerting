@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"runtime"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -73,14 +74,7 @@ func (ws *WebServer) setupRoutes() {
 	// SPA fallback: serve static files, fall back to index.html for client routes.
 	distDir := "./web/dist/"
 	fileServer := http.FileServer(http.Dir(distDir))
-	ws.router.HandleFunc("/*", func(w http.ResponseWriter, r *http.Request) {
-		path := "." + r.URL.Path
-		if _, err := http.Dir(distDir).Open(path); err == nil {
-			fileServer.ServeHTTP(w, r)
-			return
-		}
-		http.ServeFile(w, r, distDir+"index.html")
-	})
+	ws.router.HandleFunc("/*", spaHandler(distDir, fileServer))
 }
 
 func (ws *WebServer) getStatus(w http.ResponseWriter, _ *http.Request) {
@@ -230,4 +224,33 @@ func (ws *WebServer) Start(port int) error {
 	addr := ":" + strconv.Itoa(port)
 	logger.Info("Starting web server", "address", addr)
 	return http.ListenAndServe(addr, ws.router)
+}
+
+// spaHandler serves the built UI. Hashed assets are cached forever; index.html
+// must be revalidated, otherwise a browser keeps an old index.html after a
+// deploy and asks for asset hashes that no longer exist. A missing asset is a
+// 404: answering it with index.html (200, text/html) made the browser drop the
+// stylesheet and render the page unstyled.
+func spaHandler(distDir string, fileServer http.Handler) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if f, err := http.Dir(distDir).Open(r.URL.Path); err == nil {
+			st, _ := f.Stat()
+			f.Close()
+			if st != nil && !st.IsDir() {
+				if strings.HasPrefix(r.URL.Path, "/assets/") {
+					w.Header().Set("Cache-Control", "public, max-age=31536000, immutable")
+				} else {
+					w.Header().Set("Cache-Control", "no-cache")
+				}
+				fileServer.ServeHTTP(w, r)
+				return
+			}
+		}
+		if strings.HasPrefix(r.URL.Path, "/assets/") {
+			http.NotFound(w, r)
+			return
+		}
+		w.Header().Set("Cache-Control", "no-cache")
+		http.ServeFile(w, r, distDir+"index.html")
+	}
 }
