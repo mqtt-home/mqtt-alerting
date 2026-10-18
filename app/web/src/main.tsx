@@ -2,18 +2,25 @@ import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { BrowserRouter } from 'react-router-dom'
 import { App } from './App.tsx'
-import { ThemeProvider } from './contexts/ThemeContext.tsx'
+import { ErrorBoundary } from './ErrorBoundary'
+import { I18nProvider } from './lib/i18n'
 import './index.css'
-import { ErrorBoundary } from './ErrorBoundary';
+
+// Follow the system appearance live (index.html sets it before first paint).
+const dark = matchMedia('(prefers-color-scheme: dark)')
+dark.addEventListener('change', (e) => {
+  document.documentElement.classList.toggle('dark', e.matches)
+  document.documentElement.dataset.theme = e.matches ? 'dark' : 'light'
+})
 
 ReactDOM.createRoot(document.getElementById('root')!).render(
   <React.StrictMode>
     <BrowserRouter>
-      <ThemeProvider>
+      <I18nProvider>
         <ErrorBoundary>
           <App />
         </ErrorBoundary>
-      </ThemeProvider>
+      </I18nProvider>
     </BrowserRouter>
   </React.StrictMode>,
 )

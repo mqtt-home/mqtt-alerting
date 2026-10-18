@@ -1,237 +1,312 @@
 import { useState } from 'react';
-import { Sun, Moon, Wifi, WifiOff, Mail, BellRing, CheckCircle2, CircleHelp, Clock, AlertTriangle } from 'lucide-react';
+import {
+  AlertTriangle, Bell, BellRing, CheckCircle2, CircleHelp, Clock, Mail, Send, ShieldCheck,
+} from 'lucide-react';
 import { useSSE } from '@/hooks/useSSE';
-import { useTheme } from '@/contexts/ThemeContext';
 import { sendCommand } from '@/lib/api';
-import type { Alert, AlertEvent, MailStats, RuleInfo } from '@/types/status';
+import { LANGS, useI18n } from '@/lib/i18n';
+import type { Alert, AlertEvent, MailStats, RuleInfo, Status } from '@/types/status';
 
-function ago(iso?: string): string {
-  if (!iso) return '–';
-  const s = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000));
-  if (s < 60) return `${s}s ago`;
-  if (s < 3600) return `${Math.floor(s / 60)}m ago`;
-  if (s < 172800) return `${Math.floor(s / 3600)}h ${Math.floor((s % 3600) / 60)}m ago`;
-  return `${Math.floor(s / 86400)}d ago`;
-}
+// Everything from the backend is read defensively: one `null` where a list is
+// expected once blanked the whole page (v0.4.0, "topics": null).
+const list = <T,>(xs: T[] | null | undefined): T[] => (Array.isArray(xs) ? xs : []);
 
-function time(iso: string): string {
-  return new Date(iso).toLocaleString(undefined, {
-    weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit',
-  });
-}
+const tint = (c: string) => ({ ['--c' as string]: c }) as React.CSSProperties;
 
-function Section({ title, children }: { title: string; children: React.ReactNode }) {
+function SecTitle({ title, meta }: { title: string; meta?: string }) {
   return (
-    <section className="space-y-2">
-      <h2 className="text-sm font-medium uppercase tracking-wide text-muted-foreground">{title}</h2>
-      {children}
-    </section>
+    <div className="sec-title">
+      <h2>{title}</h2>
+      {meta && <span className="r num">{meta}</span>}
+    </div>
+  );
+}
+
+function LangSwitch() {
+  const { lang, setLang, t } = useI18n();
+  return (
+    <div className="seg" role="group" aria-label={t('language')}>
+      {LANGS.map(l => (
+        <button key={l} type="button" aria-pressed={lang === l} onClick={() => setLang(l)}>
+          {l.toUpperCase()}
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function TopBar({ status, isConnected, error, reconnect }: {
+  status: Status | null;
+  isConnected: boolean;
+  error: ReturnType<typeof useSSE>['error'];
+  reconnect: () => void;
+}) {
+  const { t, num } = useI18n();
+  return (
+    <header className="top-bar">
+      <div className="mx-auto flex max-w-3xl items-center gap-3 px-safe py-3">
+        <span className="ico"><Bell /></span>
+        <div className="min-w-0 flex-1">
+          <h1 className="app-tt">{t('title')}</h1>
+          {isConnected ? (
+            <div className="app-st">
+              <span className="dot live" />
+              <span className="num truncate">
+                {t('conn.live')}{status ? ` · ${t('conn.checked', { n: num(status.messages) })}` : ''}
+              </span>
+            </div>
+          ) : (
+            <button type="button" className="app-st" onClick={reconnect} title={t('conn.reconnect')}>
+              <span className={error ? 'dot bad' : 'dot idle'} />
+              <span className="truncate">{t(error ?? 'conn.connecting')}</span>
+            </button>
+          )}
+        </div>
+        <LangSwitch />
+      </div>
+    </header>
+  );
+}
+
+function Stats({ status }: { status: Status }) {
+  const { t, num } = useI18n();
+  const alerts = list(status.alerts);
+  const rules = list(status.rules);
+  const firing = alerts.filter(a => a.state === 'firing').length;
+  const pending = alerts.length - firing;
+  const watching = rules.reduce((n, r) => n + (r.watching ?? 0), 0);
+  return (
+    <div className="stats">
+      <div className={`stat${firing > 0 ? ' alert' : ''}`}>
+        <div className="k"><BellRing />{t('stat.firing')}</div>
+        <div className="v">{num(firing)}</div>
+      </div>
+      <div className={`stat${pending > 0 ? ' warn' : ''}`}>
+        <div className="k"><Clock />{t('stat.pending')}</div>
+        <div className="v">{num(pending)}</div>
+      </div>
+      <div className="stat">
+        <div className="k"><ShieldCheck />{t('stat.rules')}</div>
+        <div className="v">{num(rules.length)}</div>
+        <div className="s num">{t('stat.watched', { w: num(watching) })}</div>
+      </div>
+      <div className="stat">
+        <div className="k"><Mail />{t('stat.mails')}</div>
+        <div className="v">{num(status.mail?.sent)}</div>
+        <div className="s num">{t('stat.mailsHour', { n: num(status.mail?.sent_last_hour) })}</div>
+      </div>
+    </div>
   );
 }
 
 function AlertRow({ alert }: { alert: Alert }) {
+  const { t, dur } = useI18n();
   const firing = alert.state === 'firing';
+  const c = firing ? 'var(--alert)' : 'var(--warn)';
   return (
-    <div className={`rounded-lg border p-3 ${firing ? 'border-red-500/50 bg-red-500/10' : 'border-amber-500/40 bg-amber-500/10'}`}>
-      <div className="flex items-start gap-3">
-        {firing
-          ? <BellRing className="mt-0.5 h-5 w-5 shrink-0 text-red-500" />
-          : <Clock className="mt-0.5 h-5 w-5 shrink-0 text-amber-500" />}
-        <div className="min-w-0 flex-1">
-          <div className="font-medium">{alert.title}</div>
-          <div className="break-all font-mono text-xs text-muted-foreground">{alert.topic}</div>
-          <div className="text-sm text-muted-foreground">
-            {alert.rule}{alert.value ? <> · <span className="font-mono">{alert.value}</span></> : null}
+    <div className="arow" style={tint(c)}>
+      <span className="ico" style={tint(c)}>{firing ? <BellRing /> : <Clock />}</span>
+      <div className="min-w-0 flex-1">
+        <div className="t">{alert.title}</div>
+        <div className="topic">{alert.topic}</div>
+        <div className="d">
+          {alert.rule}{alert.value ? <> · <span className="mono">{alert.value}</span></> : null}
+        </div>
+      </div>
+      <div className="side">
+        <span className={`chip ${firing ? 'alert' : 'warn'}`}>{t(firing ? 'state.firing' : 'state.pending')}</span>
+        <span className="num">{t('alert.for', { d: dur(alert.fired_at ?? alert.since) })}</span>
+      </div>
+    </div>
+  );
+}
+
+function Attention({ status }: { status: Status }) {
+  const { t, num, when } = useI18n();
+  // Firing first, then pending; each oldest first.
+  const alerts = [...list(status.alerts)].sort((a, b) =>
+    (a.state === b.state ? 0 : a.state === 'firing' ? -1 : 1) ||
+    (a.fired_at ?? a.since ?? '').localeCompare(b.fired_at ?? b.since ?? ''));
+  return (
+    <section>
+      <SecTitle title={t('attention')} />
+      {alerts.length === 0 ? (
+        <div className="arow ok">
+          <span className="ico" style={tint('var(--ok)')}><CheckCircle2 /></span>
+          <div className="min-w-0 flex-1">
+            <div className="t">{t('attention.quiet')}</div>
+            <div className="d num">{t('attention.quietSub', { n: num(status.messages), date: when(status.started_at) })}</div>
           </div>
         </div>
-        <div className="shrink-0 text-right text-xs text-muted-foreground">
-          <div className={firing ? 'font-medium text-red-500' : 'font-medium text-amber-500'}>{alert.state}</div>
-          <div>{ago(alert.fired_at ?? alert.since)}</div>
+      ) : (
+        <div className="space-y-2">
+          {alerts.map(a => <AlertRow key={`${a.rule}|${a.topic}`} alert={a} />)}
         </div>
-      </div>
-    </div>
+      )}
+    </section>
   );
 }
 
-// How much of what a rule watches is fine - the answer to "0 firing, but is
-// this rule looking at anything?".
-function coverage(rule: RuleInfo): string {
-  if (rule.blind) return 'coverage unknown';
-  if (rule.watching === 0) return 'nothing seen yet';
-  if (rule.firing + rule.pending === 0) return `all ${rule.watching} fine`;
-  return `${rule.ok} of ${rule.watching} fine`;
-}
-
-function RuleRow({ rule }: { rule: RuleInfo }) {
-  const fine = !rule.blind && rule.watching > 0 && rule.firing + rule.pending === 0;
-  return (
-    <div className="rounded-lg border bg-card p-3 text-card-foreground">
-      <div className="flex items-baseline justify-between gap-3">
-        <div className="flex items-center gap-2 font-medium">
-          {fine
-            ? <CheckCircle2 className="h-4 w-4 shrink-0 text-green-500" />
-            : rule.firing > 0
-              ? <BellRing className="h-4 w-4 shrink-0 text-red-500" />
-              : rule.pending > 0
-                ? <Clock className="h-4 w-4 shrink-0 text-amber-500" />
-                : <CircleHelp className="h-4 w-4 shrink-0 text-muted-foreground" />}
-          {rule.name}
-        </div>
-        <div className="shrink-0 text-xs text-muted-foreground">
-          {rule.firing > 0 && <span className="mr-2 font-medium text-red-500">{rule.firing} firing</span>}
-          {rule.pending > 0 && <span className="mr-2 font-medium text-amber-500">{rule.pending} pending</span>}
-          <span className={fine ? 'text-green-500' : ''}>{coverage(rule)}</span> · {rule.type}
-        </div>
-      </div>
-      {rule.description && <div className="text-sm text-muted-foreground">{rule.description}</div>}
-      {rule.type !== 'promql' && <div className="mt-1 text-sm">{rule.summary}</div>}
-      <div className="mt-1 break-all font-mono text-xs text-muted-foreground">
-        {rule.type === 'promql' ? rule.summary : (rule.topics ?? []).join('  ')}
-      </div>
-    </div>
-  );
-}
-
-const kindStyle: Record<AlertEvent['kind'], string> = {
-  firing: 'text-red-500',
-  reminder: 'text-amber-500',
-  resolved: 'text-green-500',
-};
-
-function HistoryRow({ event }: { event: AlertEvent }) {
-  return (
-    // On a phone the title gets a line of its own; next to date, kind and rule
-    // it was squeezed into a column a few characters wide.
-    <div className="flex flex-wrap items-baseline gap-x-3 border-b py-1.5 text-sm last:border-b-0">
-      <span className="w-32 shrink-0 text-xs text-muted-foreground">{time(event.at)}</span>
-      <span className={`w-16 shrink-0 text-xs font-medium ${kindStyle[event.kind]}`}>{event.kind}</span>
-      <span className="order-last min-w-0 basis-full text-xs sm:order-none sm:basis-0 sm:flex-1" title={event.alert.topic}>{event.alert.title}</span>
-      <span className="ml-auto shrink-0 text-xs text-muted-foreground">{event.duration ?? event.alert.rule}</span>
-    </div>
-  );
-}
-
-function MailCard({ mail }: { mail: MailStats }) {
+function MailCard({ mail }: { mail: MailStats | null | undefined }) {
+  const { t, num, ago } = useI18n();
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ ok: boolean; text: string } | null>(null);
+  const m: MailStats = mail ?? { enabled: false, sent: 0, queued: 0, sent_last_hour: 0 };
 
   const test = async () => {
     setBusy(true);
     setResult(null);
     try {
       await sendCommand('test');
-      setResult({ ok: true, text: 'Test mail sent.' });
+      setResult({ ok: true, text: t('mail.sent') });
     } catch (e) {
-      setResult({ ok: false, text: e instanceof Error ? e.message : 'Failed' });
+      // The backend passes the SMTP error through; that stays as is.
+      setResult({ ok: false, text: e instanceof Error ? e.message : t('mail.failed') });
     } finally {
       setBusy(false);
     }
   };
 
   return (
-    <div className="rounded-lg border bg-card p-3 text-card-foreground">
-      <div className="flex items-center gap-3">
-        <Mail className="h-5 w-5 shrink-0 text-muted-foreground" />
-        <div className="min-w-0 flex-1 text-sm">
-          {mail.enabled ? (
-            <>
-              <div>{mail.sent} sent · {mail.sent_last_hour} in the last hour{mail.queued > 0 ? ` · ${mail.queued} queued` : ''}</div>
-              <div className="text-muted-foreground">last mail {ago(mail.last_sent_at)}</div>
-            </>
-          ) : (
-            <div className="text-amber-500">Sending is disabled in the config — alerts are only logged.</div>
-          )}
+    <section>
+      <SecTitle title={t('mail')} />
+      <div className="card">
+        <div className="card-b flex flex-wrap items-center gap-3" style={{ paddingTop: 14 }}>
+          <span className="ico sm" style={tint('var(--ink-3)')}><Mail /></span>
+          <div className="min-w-0 flex-1 text-sm" style={{ flexBasis: 200 }}>
+            {m.enabled ? (
+              <>
+                <div className="num">
+                  {t('mail.summary', { sent: num(m.sent), hour: num(m.sent_last_hour) })}
+                  {m.queued > 0 && <span style={{ color: 'var(--warn)' }}> · {t('mail.queued', { n: num(m.queued) })}</span>}
+                </div>
+                <div className="text-muted-foreground">
+                  {m.last_sent_at ? t('mail.last', { ago: ago(m.last_sent_at) }) : t('mail.never')}
+                </div>
+              </>
+            ) : (
+              <div style={{ color: 'var(--warn)' }}>{t('mail.disabled')}</div>
+            )}
+          </div>
+          <button type="button" className="btn" onClick={test} disabled={busy} style={busy ? { opacity: .6 } : undefined}>
+            <Send className="h-4 w-4" />
+            {busy ? t('mail.sending') : t('mail.test')}
+          </button>
         </div>
-        <button
-          onClick={test}
-          disabled={busy}
-          className="touch-target shrink-0 rounded-md border px-3 text-sm hover:bg-accent disabled:opacity-50"
-        >
-          {busy ? 'Sending…' : 'Send test mail'}
-        </button>
+        {(m.last_error || result) && (
+          <div className="card-b space-y-2" style={{ paddingTop: 0 }}>
+            {m.last_error && (
+              <div className="flex items-start gap-2 rounded-xl p-2.5 text-sm"
+                   style={{ background: 'var(--alert-soft)', color: 'var(--alert)' }}>
+                <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
+                <span className="break-all">{m.last_error} ({ago(m.last_error_at)})</span>
+              </div>
+            )}
+            {result && (
+              <div className="text-sm" style={{ color: result.ok ? 'var(--ok)' : 'var(--alert)' }}>{result.text}</div>
+            )}
+          </div>
+        )}
       </div>
-      {mail.last_error && (
-        <div className="mt-2 flex items-start gap-2 rounded-md bg-red-500/10 p-2 text-sm text-red-500">
-          <AlertTriangle className="mt-0.5 h-4 w-4 shrink-0" />
-          <span className="break-all">{mail.last_error} ({ago(mail.last_error_at)})</span>
+    </section>
+  );
+}
+
+function RuleRow({ rule }: { rule: RuleInfo }) {
+  const { t, num } = useI18n();
+  const watching = rule.watching ?? 0;
+  const bad = (rule.firing ?? 0) + (rule.pending ?? 0);
+  const fine = !rule.blind && watching > 0 && bad === 0;
+  // How much of what a rule watches is fine - the answer to "0 firing, but is
+  // this rule looking at anything?".
+  const coverage = rule.blind ? t('cov.unknown')
+    : watching === 0 ? t('cov.none')
+      : bad === 0 ? t('cov.all', { n: num(watching) })
+        : t('cov.some', { ok: num(rule.ok), n: num(watching) });
+  const pct = !rule.blind && watching > 0 ? Math.round((100 * (rule.ok ?? 0)) / watching) : 0;
+  const icon = fine ? <CheckCircle2 style={{ color: 'var(--ok)' }} />
+    : rule.firing > 0 ? <BellRing style={{ color: 'var(--alert)' }} />
+      : rule.pending > 0 ? <Clock style={{ color: 'var(--warn)' }} />
+        : <CircleHelp style={{ color: 'var(--ink-4)' }} />;
+  return (
+    <div className="rrow">
+      {icon}
+      <div className="min-w-0">
+        <div className="n">{rule.name}</div>
+        <div className="c num">
+          {rule.firing > 0 && <span style={{ color: 'var(--alert)', fontWeight: 550 }}>{t('rule.firing', { n: num(rule.firing) })} · </span>}
+          {rule.pending > 0 && <span style={{ color: 'var(--warn)', fontWeight: 550 }}>{t('rule.pending', { n: num(rule.pending) })} · </span>}
+          <span className={fine ? 'fine' : ''}>{coverage}</span>
+        </div>
+        {rule.description && <div className="desc">{rule.description}</div>}
+        {rule.type !== 'promql' && rule.summary && <div className="desc">{rule.summary}</div>}
+        <div className="q">{rule.type === 'promql' ? rule.summary : list(rule.topics).join('  ')}</div>
+      </div>
+      <div className="meter"><i style={{ width: `${pct}%` }} /></div>
+      <span className="x">{rule.type}</span>
+    </div>
+  );
+}
+
+function Rules({ rules }: { rules: RuleInfo[] }) {
+  const { t, num } = useI18n();
+  const watching = rules.reduce((n, r) => n + (r.watching ?? 0), 0);
+  return (
+    <section>
+      <SecTitle title={t('rules')} meta={t('rules.meta', { n: num(rules.length), w: num(watching) })} />
+      <div className="card" style={{ padding: '2px 16px' }}>
+        {rules.length === 0
+          ? <div className="py-3 text-sm text-muted-foreground">{t('rules.empty')}</div>
+          : rules.map(r => <RuleRow key={r.name} rule={r} />)}
+      </div>
+    </section>
+  );
+}
+
+const kindChip: Record<AlertEvent['kind'], string> = { firing: 'alert', reminder: 'warn', resolved: 'ok' };
+const kindKey = { firing: 'kind.firing', reminder: 'kind.reminder', resolved: 'kind.resolved' } as const;
+
+function History({ events }: { events: AlertEvent[] }) {
+  const { t, when } = useI18n();
+  return (
+    <section>
+      <SecTitle title={t('history')} meta={t('history.meta')} />
+      {events.length === 0 ? (
+        <div className="card card-b text-sm text-muted-foreground" style={{ paddingTop: 14 }}>{t('history.empty')}</div>
+      ) : (
+        <div className="card" style={{ padding: '2px 16px' }}>
+          {events.map((e, i) => (
+            <div key={`${e.at}|${i}`} className="hrow">
+              <time className="num">{when(e.at)}</time>
+              <span><span className={`chip ${kindChip[e.kind] ?? ''}`}>{kindKey[e.kind] ? t(kindKey[e.kind]) : e.kind}</span></span>
+              <span className="tt min-w-0" title={e.alert?.topic}>{e.alert?.title}</span>
+              <span className="x">{e.duration ?? e.alert?.rule}</span>
+            </div>
+          ))}
         </div>
       )}
-      {result && (
-        <div className={`mt-2 text-sm ${result.ok ? 'text-green-500' : 'text-red-500'}`}>{result.text}</div>
-      )}
-    </div>
+    </section>
   );
 }
 
 export function App() {
   const { status, isConnected, error, reconnect } = useSSE();
-  const { theme, toggleTheme } = useTheme();
-
-  const firing = (status?.alerts ?? []).filter(a => a.state === 'firing').length;
+  const { t } = useI18n();
 
   return (
-    <div className="min-h-screen bg-background text-foreground">
-      <header className="sticky top-0 z-10 border-b bg-background/95 backdrop-blur">
-        <div className="mx-auto flex max-w-3xl items-center justify-between p-4">
-          <h1 className="text-lg font-semibold">Alerting</h1>
-          <div className="flex items-center gap-2">
-            <button
-              onClick={reconnect}
-              title={isConnected ? 'Connected' : (error ?? 'Disconnected')}
-              className="touch-target flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
-            >
-              {isConnected
-                ? <Wifi className="h-5 w-5 text-green-500" />
-                : <WifiOff className="h-5 w-5 text-red-500" />}
-            </button>
-            <button
-              onClick={toggleTheme}
-              title="Toggle theme"
-              className="touch-target flex items-center justify-center rounded-md text-muted-foreground hover:text-foreground"
-            >
-              {theme === 'dark' ? <Sun className="h-5 w-5" /> : <Moon className="h-5 w-5" />}
-            </button>
-          </div>
-        </div>
-      </header>
-
-      <main className="mx-auto max-w-3xl space-y-6 p-4">
+    <div className="min-h-screen">
+      <TopBar status={status} isConnected={isConnected} error={error} reconnect={reconnect} />
+      <main className="mx-auto max-w-3xl space-y-7 px-safe pt-5"
+            style={{ paddingBottom: 'calc(2.5rem + env(safe-area-inset-bottom))' }}>
         {status === null ? (
-          <div className="text-muted-foreground">Waiting for status…</div>
+          <div className="text-muted-foreground">{t('waiting')}</div>
         ) : (
           <>
-            <Section title={firing > 0 ? `${firing} firing` : 'Alerts'}>
-              {(status.alerts ?? []).length === 0 ? (
-                <div className="flex items-center gap-3 rounded-lg border border-green-500/40 bg-green-500/10 p-3">
-                  <CheckCircle2 className="h-5 w-5 text-green-500" />
-                  <span className="text-sm">All quiet. {status.messages.toLocaleString()} messages checked since {time(status.started_at)}.</span>
-                </div>
-              ) : (
-                <div className="space-y-2">
-                  {(status.alerts ?? []).map(a => <AlertRow key={`${a.rule}|${a.topic}`} alert={a} />)}
-                </div>
-              )}
-            </Section>
-
-            <Section title="Mail">
-              <MailCard mail={status.mail} />
-            </Section>
-
-            <Section title={`Rules (${(status.rules ?? []).length})`}>
-              <div className="space-y-2">
-                {(status.rules ?? []).map(r => <RuleRow key={r.name} rule={r} />)}
-              </div>
-            </Section>
-
-            <Section title="History">
-              {(status.history ?? []).length === 0 ? (
-                <div className="text-sm text-muted-foreground">Nothing has fired since the service started.</div>
-              ) : (
-                <div className="rounded-lg border bg-card px-3 py-1 text-card-foreground">
-                  {(status.history ?? []).map((e, i) => <HistoryRow key={`${e.at}|${i}`} event={e} />)}
-                </div>
-              )}
-            </Section>
+            <Stats status={status} />
+            <Attention status={status} />
+            <MailCard mail={status.mail} />
+            <Rules rules={list(status.rules)} />
+            <History events={list(status.history)} />
           </>
         )}
       </main>

@@ -1,4 +1,20 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react';
+import { useI18n } from '@/lib/i18n';
+
+function Crash({ error }: { error: Error }) {
+  const { t } = useI18n();
+  return (
+    <div className="mx-auto max-w-3xl px-safe py-6">
+      <h1 className="text-lg font-semibold" style={{ color: 'var(--alert)' }}>{t('crash.title')}</h1>
+      <p className="mt-2 text-sm text-muted-foreground">
+        {t('crash.body')}{' '}
+        <a className="underline" href="/api/status">/api/status</a>.
+      </p>
+      <pre className="mt-4 overflow-x-auto rounded-md border p-3 text-xs">{String(error.stack ?? error)}</pre>
+      <button className="btn mt-4" onClick={() => location.reload()}>{t('crash.reload')}</button>
+    </div>
+  );
+}
 
 // Without this a single render error unmounts the whole tree and leaves a white
 // page with nothing to go on. A dashboard for alerts must not fail silently.
@@ -14,17 +30,6 @@ export class ErrorBoundary extends Component<{ children: ReactNode }, { error: E
   }
 
   render() {
-    if (!this.state.error) return this.props.children;
-    return (
-      <div className="mx-auto max-w-3xl p-6">
-        <h1 className="text-lg font-semibold text-red-500">The dashboard hit an error</h1>
-        <p className="mt-2 text-sm text-muted-foreground">
-          Alerting itself keeps running — this is only the page. The raw status is at{' '}
-          <a className="underline" href="/api/status">/api/status</a>.
-        </p>
-        <pre className="mt-4 overflow-x-auto rounded-md border p-3 text-xs">{String(this.state.error?.stack ?? this.state.error)}</pre>
-        <button className="mt-4 rounded-md border px-3 py-1.5 text-sm" onClick={() => location.reload()}>Reload</button>
-      </div>
-    );
+    return this.state.error ? <Crash error={this.state.error} /> : this.props.children;
   }
 }
