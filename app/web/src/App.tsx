@@ -4,7 +4,7 @@ import {
 } from 'lucide-react';
 import { useSSE } from '@/hooks/useSSE';
 import { sendCommand } from '@/lib/api';
-import { LANGS, useI18n } from '@/lib/i18n';
+import { LangSwitch, useI18n } from '@/lib/i18n';
 import type { Alert, AlertEvent, MailStats, RuleInfo, Status } from '@/types/status';
 
 // Everything from the backend is read defensively: one `null` where a list is
@@ -22,26 +22,14 @@ function SecTitle({ title, meta }: { title: string; meta?: string }) {
   );
 }
 
-function LangSwitch() {
-  const { lang, setLang, t } = useI18n();
-  return (
-    <div className="seg" role="group" aria-label={t('language')}>
-      {LANGS.map(l => (
-        <button key={l} type="button" aria-pressed={lang === l} onClick={() => setLang(l)}>
-          {l.toUpperCase()}
-        </button>
-      ))}
-    </div>
-  );
-}
-
 function TopBar({ status, isConnected, error, reconnect }: {
   status: Status | null;
   isConnected: boolean;
   error: ReturnType<typeof useSSE>['error'];
   reconnect: () => void;
 }) {
-  const { t, num } = useI18n();
+  const i18n = useI18n();
+  const { t, num } = i18n;
   return (
     <header className="top-bar">
       <div className="mx-auto flex max-w-3xl items-center gap-3 px-safe py-3">
@@ -62,7 +50,7 @@ function TopBar({ status, isConnected, error, reconnect }: {
             </button>
           )}
         </div>
-        <LangSwitch />
+        <LangSwitch i18n={i18n} />
       </div>
     </header>
   );

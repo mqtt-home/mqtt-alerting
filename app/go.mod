@@ -3,7 +3,7 @@ module github.com/mqtt-home/mqtt-alerting
 go 1.26.2
 
 require (
-	github.com/go-chi/chi/v5 v5.3.2
+	github.com/go-chi/chi/v5 v5.5.0
 	github.com/go-chi/cors v1.2.2
 	github.com/philipparndt/go-logger v1.10.0
 	github.com/philipparndt/go-logger/chi v1.10.0
